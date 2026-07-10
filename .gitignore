@@ -38,3 +38,7 @@ infra/data/
 
 # Logs
 *.log
+
+# Cursor / Refact
+.refact/
+.cursor/
