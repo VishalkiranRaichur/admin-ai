@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Next.js
+apps/web/.next/
+apps/web/out/
+
+# Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker volumes (local)
+infra/data/
+
+# Logs
+*.log

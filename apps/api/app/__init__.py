@@ -1,0 +1,1 @@
+"""Admin AI FastAPI application."""
