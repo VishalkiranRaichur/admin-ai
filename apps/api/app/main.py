@@ -4,11 +4,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routers import health
+from app.db import create_tables
+from app.routers import documents, health
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    await create_tables()
     yield
 
 
@@ -27,7 +29,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(health.router, prefix=settings.api_prefix, tags=["health"])
+app.include_router(
+    health.router,
+    prefix=settings.api_prefix,
+    tags=["health"],
+)
+
+app.include_router(
+    documents.router,
+    prefix=f"{settings.api_prefix}/documents",
+    tags=["documents"],
+)
 
 
 @app.get("/")
