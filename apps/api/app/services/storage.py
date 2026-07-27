@@ -31,3 +31,16 @@ def upload_file(
     )
 
     return storage_key
+
+def download_file(storage_key: str) -> bytes:
+    client = get_s3_client()
+
+    response = client.get_object(
+        Bucket=settings.s3_bucket,
+        Key=storage_key,
+    )
+
+    try:
+        return response["Body"].read()
+    finally:
+        response["Body"].close()

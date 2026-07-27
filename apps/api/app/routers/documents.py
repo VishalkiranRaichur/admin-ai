@@ -7,11 +7,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import get_db
 from app.models import Document
 from app.schemas import DocumentResponse
+from app.services.chunk_repository import save_chunks
+from app.services.document_processor import process_document
 from app.services.storage import upload_file
 
 router = APIRouter()
 
-ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt", ".csv"}
+ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt", ".csv", ".md"}
 
 
 @router.post(
@@ -67,8 +69,31 @@ async def upload_document(
         status="uploaded",
     )
 
-    db.add(document)
-    await db.commit()
-    await db.refresh(document)
+    try:
+        result = process_document(
+            file_bytes,
+            filename,
+        )
+
+        db.add(document)
+
+        await save_chunks(
+            db=db,
+            document_id=document.id,
+            chunks=result["chunks"],
+        )
+
+        document.status = "processed"
+
+        await db.commit()
+        await db.refresh(document)
+
+    except Exception as error:
+        await db.rollback()
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Document processing failed: {error}",
+        ) from error
 
     return document

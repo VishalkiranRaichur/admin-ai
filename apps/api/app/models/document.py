@@ -3,7 +3,7 @@ from datetime import datetime
 
 from sqlalchemy import BigInteger, DateTime, String
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
 
@@ -48,4 +48,10 @@ class Document(Base):
         DateTime(timezone=True),
         nullable=False,
         default=datetime.utcnow,
+    )
+
+    chunks = relationship(
+        "DocumentChunk",
+        back_populates="document",
+        cascade="all, delete-orphan",
     )
