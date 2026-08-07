@@ -2,7 +2,6 @@ from openai import AsyncOpenAI
 
 from app.config import settings
 
-
 EMBEDDING_MODEL = "text-embedding-3-small"
 
 

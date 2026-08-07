@@ -2,8 +2,9 @@ import csv
 import io
 from pathlib import Path
 
-from docx import Document
 import fitz
+from docx import Document
+
 
 def parse_txt(file_bytes: bytes) -> str:
     return file_bytes.decode("utf-8")

@@ -4,7 +4,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.services.search_service import semantic_search
 
-
 MODEL = "gpt-4o-mini"
 
 
@@ -47,7 +46,8 @@ You are Admin AI.
 
 Answer the user's question using only the provided document context.
 
-If the answer is not supported by the context, say that you could not find enough information in the uploaded documents.
+If the answer is not supported by the context,
+say that you could not find enough information in the uploaded documents.
 
 Do not invent facts.
 

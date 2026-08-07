@@ -5,7 +5,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import get_db
 from app.services.rag_service import answer_question
 
-
 router = APIRouter()
 
 
