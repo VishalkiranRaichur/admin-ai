@@ -70,7 +70,7 @@ async def upload_document(
     )
 
     try:
-        result = process_document(
+        result = await process_document(
             file_bytes,
             filename,
         )
@@ -81,6 +81,7 @@ async def upload_document(
             db=db,
             document_id=document.id,
             chunks=result["chunks"],
+            embeddings=result["embeddings"],
         )
 
         document.status = "processed"
