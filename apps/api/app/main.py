@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.db import create_tables
-from app.routers import documents, health
+from app.routers import ask, documents, health
 
 
 @asynccontextmanager
@@ -39,6 +39,12 @@ app.include_router(
     documents.router,
     prefix=f"{settings.api_prefix}/documents",
     tags=["documents"],
+)
+
+app.include_router(
+    ask.router,
+    prefix=settings.api_prefix,
+    tags=["ask"],
 )
 
 
