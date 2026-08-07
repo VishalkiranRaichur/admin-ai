@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     s3_secret_key: str = "minioadmin"
     s3_bucket: str = "admin-ai-documents"
     s3_region: str = "us-east-1"
+    
+    openai_api_key: str = ""
 
     clerk_jwks_url: str = ""
     clerk_issuer: str = ""
