@@ -60,7 +60,25 @@ Add your [Clerk](https://dashboard.clerk.com) keys to `apps/web/.env.local`.
 make install
 ```
 
-### 4. Run the apps
+### 4. Initialize the database schema
+
+For a fresh database:
+
+```bash
+make db-upgrade
+```
+
+For an existing local database created before Alembic was added, validate and
+stamp the document schema before applying additive migrations:
+
+```bash
+make db-baseline
+make db-upgrade
+```
+
+The baseline command refuses to stamp partial or drifted schemas.
+
+### 5. Run the apps
 
 Terminal 1 — API:
 ```bash

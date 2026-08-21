@@ -6,9 +6,12 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex min-h-screen">
+    <div className="flex min-h-screen bg-[#09090d] text-white">
       <Sidebar />
-      <main className="flex-1 overflow-auto bg-muted">{children}</main>
+
+      <main className="min-w-0 flex-1 overflow-hidden bg-[#09090d]">
+        {children}
+      </main>
     </div>
   );
 }

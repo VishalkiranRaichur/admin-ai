@@ -1,22 +1,11 @@
-from contextlib import asynccontextmanager
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.db import create_tables
 from app.routers import ask, documents, health
-
-
-@asynccontextmanager
-async def lifespan(_app: FastAPI):
-    await create_tables()
-    yield
-
 
 app = FastAPI(
     title=settings.app_name,
-    lifespan=lifespan,
     docs_url="/docs",
     redoc_url="/redoc",
 )

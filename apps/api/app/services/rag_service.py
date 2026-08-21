@@ -1,17 +1,8 @@
-from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.services.openai_client import get_openai_client
 from app.services.search_service import semantic_search
-
-MODEL = "gpt-4o-mini"
-
-
-def get_openai_client() -> AsyncOpenAI:
-    if not settings.openai_api_key:
-        raise ValueError("OPENAI_API_KEY is not configured.")
-
-    return AsyncOpenAI(api_key=settings.openai_api_key)
 
 
 async def answer_question(
@@ -61,7 +52,7 @@ USER QUESTION:
     client = get_openai_client()
 
     response = await client.chat.completions.create(
-        model=MODEL,
+        model=settings.chat_model,
         messages=[
             {
                 "role": "user",
@@ -79,6 +70,7 @@ USER QUESTION:
             {
                 "chunk_id": str(chunk.id),
                 "document_id": str(chunk.document_id),
+                "filename": chunk.document.filename,
                 "chunk_index": chunk.chunk_index,
                 "content": chunk.content,
             }
