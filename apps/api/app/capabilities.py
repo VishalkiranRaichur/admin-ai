@@ -16,7 +16,7 @@ class CapabilityState(StrEnum):
 
 CAPABILITY_STATES: dict[Capability, CapabilityState] = {
     Capability.ASK: CapabilityState.ACTIVE,
-    Capability.INVESTIGATE: CapabilityState.FOUNDATION,
+    Capability.INVESTIGATE: CapabilityState.ACTIVE,
     Capability.WATCH: CapabilityState.INACTIVE,
     Capability.ACT: CapabilityState.INACTIVE,
 }

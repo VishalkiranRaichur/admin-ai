@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     investigation_max_model_calls: int = 6
     investigation_max_retrieval_calls: int = 6
     investigation_max_runtime_seconds: int = 300
+    investigations_enabled: bool = True
+    investigation_planner_mode: str = "model"
 
     clerk_jwks_url: str = ""
     clerk_issuer: str = ""

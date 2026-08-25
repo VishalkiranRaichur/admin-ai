@@ -3,7 +3,6 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.concurrency import run_in_threadpool
 from openai import OpenAIError
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
@@ -13,7 +12,7 @@ from app.config import settings
 from app.db import get_db
 from app.models import Document
 from app.schemas import DocumentResponse
-from app.services.chunk_repository import save_chunks
+from app.services.document_ingestion import ingest_document
 from app.services.document_processor import process_document
 from app.services.embedding_service import OpenAIConfigurationError
 from app.services.storage import delete_file, upload_file
@@ -29,9 +28,7 @@ async def list_documents(
     db: AsyncSession = Depends(get_db),
 ) -> list[Document]:
     try:
-        result = await db.execute(
-            select(Document).order_by(Document.created_at.desc())
-        )
+        result = await db.execute(select(Document).order_by(Document.created_at.desc()))
         return list(result.scalars().all())
     except SQLAlchemyError as error:
         logger.exception("Failed to list documents")
@@ -78,63 +75,24 @@ async def upload_document(
 
     document_id = uuid.uuid4()
 
-    storage_key = (
-        f"documents/{document_id}/{filename}"
-    )
+    storage_key = f"documents/{document_id}/{filename}"
 
-    content_type = (
-        file.content_type
-        or "application/octet-stream"
-    )
-
-    document = Document(
-        id=document_id,
-        filename=filename,
-        content_type=content_type,
-        size_bytes=len(file_bytes),
-        storage_key=storage_key,
-        status="uploaded",
-    )
-
-    storage_uploaded = False
+    content_type = file.content_type or "application/octet-stream"
 
     try:
-        await run_in_threadpool(
-            upload_file,
-            file_bytes,
-            storage_key,
-            content_type,
-        )
-        storage_uploaded = True
-
-        result = await process_document(
-            file_bytes,
-            filename,
-        )
-
-        db.add(document)
-
-        await save_chunks(
+        document = await ingest_document(
             db=db,
-            document_id=document.id,
-            chunks=result["chunks"],
-            embeddings=result["embeddings"],
+            file_bytes=file_bytes,
+            filename=filename,
+            content_type=content_type,
+            storage_key=storage_key,
+            upload=upload_file,
+            delete=delete_file,
+            processor=process_document,
+            document_id=document_id,
         )
-
-        document.status = "processed"
-
-        await db.commit()
-        await db.refresh(document)
 
     except (OpenAIConfigurationError, OpenAIError, SQLAlchemyError, ValueError) as error:
-        await db.rollback()
-
-        if storage_uploaded:
-            try:
-                await run_in_threadpool(delete_file, storage_key)
-            except Exception:
-                logger.exception("Failed to clean up object %s", storage_key)
-
         logger.exception("Document processing failed for %s", filename)
 
         status_code = 502 if isinstance(error, OpenAIError) else 422
@@ -148,14 +106,6 @@ async def upload_document(
             detail=f"Document processing failed: {error}",
         ) from error
     except Exception as error:
-        await db.rollback()
-
-        if storage_uploaded:
-            try:
-                await run_in_threadpool(delete_file, storage_key)
-            except Exception:
-                logger.exception("Failed to clean up object %s", storage_key)
-
         logger.exception("Document upload failed for %s", filename)
         raise HTTPException(
             status_code=503,

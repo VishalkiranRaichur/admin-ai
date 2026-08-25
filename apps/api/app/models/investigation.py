@@ -6,6 +6,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
@@ -30,9 +31,7 @@ def utc_now() -> datetime:
 class Investigation(Base):
     __tablename__ = "investigations"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     question: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(
         String(32), nullable=False, default=InvestigationStatus.QUEUED.value, index=True
@@ -48,6 +47,12 @@ class Investigation(Base):
     )
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failure_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    execution_usage: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
 
 
 class InvestigationStep(Base):
@@ -56,9 +61,7 @@ class InvestigationStep(Base):
         UniqueConstraint("investigation_id", "sequence", name="uq_investigation_step_sequence"),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     investigation_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("investigations.id", ondelete="CASCADE"),
@@ -83,9 +86,7 @@ class Entity(Base):
         UniqueConstraint("entity_type", "external_key", name="uq_entity_type_external_key"),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     entity_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     external_key: Mapped[str] = mapped_column(String(255), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -101,9 +102,7 @@ class Entity(Base):
 class EntityRelationship(Base):
     __tablename__ = "relationships"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     source_entity_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("entities.id", ondelete="CASCADE"),
@@ -128,9 +127,7 @@ class EntityRelationship(Base):
 class MetricObservation(Base):
     __tablename__ = "metric_observations"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     metric_key: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     entity_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
@@ -149,12 +146,38 @@ class MetricObservation(Base):
     source_locator: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
 
 
+class BusinessRecord(Base):
+    __tablename__ = "business_records"
+    __table_args__ = (
+        UniqueConstraint("record_type", "external_key", name="uq_business_record_type_key"),
+        Index("ix_business_records_type_occurred", "record_type", "occurred_at"),
+        Index("ix_business_records_primary_occurred", "primary_entity_id", "occurred_at"),
+        Index("ix_business_records_related_occurred", "related_entity_id", "occurred_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    record_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    external_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    primary_entity_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("entities.id", ondelete="CASCADE"), nullable=False
+    )
+    related_entity_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("entities.id", ondelete="SET NULL"), nullable=True
+    )
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    attributes: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    source_document_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("documents.id", ondelete="SET NULL"), nullable=True
+    )
+    source_locator: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+
+
 class EvidenceItem(Base):
     __tablename__ = "evidence_items"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     investigation_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("investigations.id", ondelete="CASCADE"),
@@ -167,6 +190,9 @@ class EvidenceItem(Base):
     evidence_kind: Mapped[str] = mapped_column(String(32), nullable=False)
     source_kind: Mapped[str] = mapped_column(String(32), nullable=False)
     source_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    provenance_group: Mapped[str] = mapped_column(String(255), nullable=False, default="unknown")
+    source_locator: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    related_entity_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     content: Mapped[str | None] = mapped_column(Text, nullable=True)
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -178,9 +204,7 @@ class EvidenceItem(Base):
 class Claim(Base):
     __tablename__ = "claims"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     investigation_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("investigations.id", ondelete="CASCADE"),

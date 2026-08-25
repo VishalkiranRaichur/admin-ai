@@ -1,6 +1,7 @@
 from app.models.document import Document
 from app.models.document_chunk import DocumentChunk
 from app.models.investigation import (
+    BusinessRecord,
     Claim,
     ClaimEvidence,
     Entity,
@@ -14,6 +15,7 @@ from app.models.investigation import (
 __all__ = [
     "Claim",
     "ClaimEvidence",
+    "BusinessRecord",
     "Document",
     "DocumentChunk",
     "Entity",

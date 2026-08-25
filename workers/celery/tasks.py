@@ -1,0 +1,77 @@
+import asyncio
+import random
+import uuid
+
+from celery.exceptions import SoftTimeLimitExceeded
+from openai import APIConnectionError, APIStatusError, APITimeoutError, RateLimitError
+from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
+from workers.celery.worker import celery_app
+
+from app.config import settings
+from app.db import async_session, engine
+from app.investigations.orchestrator import InvestigationOrchestrator, mark_failed
+
+TRANSIENT_ERRORS = (
+    APIConnectionError,
+    APITimeoutError,
+    RateLimitError,
+    OperationalError,
+)
+
+
+def _is_transient(error: Exception) -> bool:
+    return isinstance(error, TRANSIENT_ERRORS) or (
+        isinstance(error, APIStatusError) and error.status_code >= 500
+    )
+
+
+async def _run(investigation_id: uuid.UUID) -> None:
+    lock_key = int.from_bytes(investigation_id.bytes[:8], byteorder="big", signed=True)
+    async with engine.connect() as lock_connection:
+        acquired = await lock_connection.scalar(
+            text("SELECT pg_try_advisory_lock(:lock_key)"), {"lock_key": lock_key}
+        )
+        if not acquired:
+            return
+        try:
+            async with async_session() as db:
+                orchestrator = InvestigationOrchestrator(
+                    db,
+                    deterministic=settings.investigation_planner_mode == "deterministic",
+                )
+                await orchestrator.run(investigation_id)
+        finally:
+            await lock_connection.execute(
+                text("SELECT pg_advisory_unlock(:lock_key)"), {"lock_key": lock_key}
+            )
+
+
+async def _fail(
+    investigation_id: uuid.UUID, error: Exception, code: str | None = None
+) -> None:
+    async with async_session() as db:
+        await mark_failed(db, investigation_id, error, failure_code=code)
+
+
+@celery_app.task(
+    bind=True,
+    name="orion.run_investigation",
+    max_retries=3,
+    acks_late=True,
+    reject_on_worker_lost=True,
+)
+def run_investigation(self, investigation_id: str) -> None:
+    parsed_id = uuid.UUID(investigation_id)
+    try:
+        asyncio.run(_run(parsed_id))
+    except SoftTimeLimitExceeded as error:
+        asyncio.run(_fail(parsed_id, error, "soft_timeout"))
+        raise
+    except Exception as error:
+        if _is_transient(error) and self.request.retries < self.max_retries:
+            delays = (5, 15, 45)
+            delay = delays[self.request.retries] + random.uniform(0, 2)
+            raise self.retry(exc=error, countdown=delay) from error
+        asyncio.run(_fail(parsed_id, error))
+        raise

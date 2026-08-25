@@ -2,10 +2,14 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from enum import StrEnum
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+class StrictModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
 
 class InvestigationStatus(StrEnum):
@@ -31,19 +35,46 @@ class InvestigationIntentType(StrEnum):
     ANOMALY = "anomaly"
 
 
+class EntityType(StrEnum):
+    CUSTOMER = "customer"
+    PROJECT = "project"
+    CONTRACT = "contract"
+
+
+class BusinessRecordType(StrEnum):
+    CRM_ACTIVITY = "crm_activity"
+    SUPPORT_INCIDENT = "support_incident"
+    PROJECT_UPDATE = "project_update"
+    RENEWAL_EVENT = "renewal_event"
+
+
+class EvidenceKind(StrEnum):
+    METRIC_OBSERVATION = "metric_observation"
+    BUSINESS_RECORD = "business_record"
+    DOCUMENT_CHUNK = "document_chunk"
+    RELATIONSHIP = "relationship"
+    CALCULATION = "calculation"
+
+
+class ClaimEvidenceRelationship(StrEnum):
+    SUPPORTS = "supports"
+    CONTRADICTS = "contradicts"
+    DERIVED_FROM = "derived_from"
+
+
 class ComparisonKind(StrEnum):
     PREVIOUS_PERIOD = "previous_period"
     YEAR_OVER_YEAR = "year_over_year"
     CUSTOM = "custom"
 
 
-class InvestigationTimeScope(BaseModel):
+class InvestigationTimeScope(StrictModel):
     start: date | None = None
     end: date | None = None
     label: str | None = None
 
 
-class InvestigationIntent(BaseModel):
+class InvestigationIntent(StrictModel):
     kind: InvestigationIntentType
     metric: str | None = None
     time_scope: InvestigationTimeScope | None = None
@@ -63,9 +94,148 @@ class InvestigationToolKind(StrEnum):
     TRAVERSE_RELATIONSHIPS = "traverse_relationships"
 
 
-class InvestigationToolCall(BaseModel):
+class ToolArguments(StrictModel):
+    pass
+
+
+class QueryMetricSeriesInput(ToolArguments):
+    metric_key: str
+    period_start: date
+    period_end: date
+    entity_ids: list[UUID] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def dates_are_ordered(self) -> QueryMetricSeriesInput:
+        if self.period_start > self.period_end:
+            raise ValueError("period_start must not be after period_end")
+        return self
+
+
+class CalculateMetricChangeInput(ToolArguments):
+    current_step: int = Field(ge=1)
+    comparison_step: int | None = Field(default=None, ge=1)
+    current_period_start: date | None = None
+    comparison_period_start: date | None = None
+
+
+class RankEntityContributionsInput(ToolArguments):
+    metric_step: int = Field(ge=1)
+    current_period_start: date
+    comparison_period_start: date
+    limit: int = Field(default=10, ge=1, le=100)
+
+
+class DynamicEntitySelector(StrEnum):
+    TOP_CONTRIBUTOR = "top_contributor"
+
+
+class QueryRelatedRecordsInput(ToolArguments):
+    entity_ids: list[UUID] = Field(default_factory=list)
+    entity_selector: DynamicEntitySelector | None = None
+    record_types: list[BusinessRecordType] = Field(default_factory=list)
+    start: datetime | None = None
+    end: datetime | None = None
+    limit: int = Field(default=50, ge=1, le=100)
+
+    @model_validator(mode="after")
+    def valid_scope(self) -> QueryRelatedRecordsInput:
+        if not self.entity_ids and self.entity_selector is None:
+            raise ValueError("entity_ids or entity_selector is required")
+        if self.start and self.end and self.start > self.end:
+            raise ValueError("start must not be after end")
+        return self
+
+
+class SemanticDocumentSearchInput(ToolArguments):
+    query: str = Field(default="investigation question", min_length=1, max_length=1000)
+    entity_ids: list[UUID] = Field(default_factory=list)
+    entity_selector: DynamicEntitySelector | None = None
+    document_ids: list[UUID] = Field(default_factory=list)
+    limit: int = Field(default=10, ge=1, le=10)
+
+
+class TraverseRelationshipsInput(ToolArguments):
+    entity_ids: list[UUID] = Field(default_factory=list)
+    entity_selector: DynamicEntitySelector | None = None
+    relationship_types: list[str] = Field(default_factory=list)
+    depth: int = Field(default=1, ge=1, le=2)
+    max_nodes: int = Field(default=50, ge=1, le=50)
+
+    @model_validator(mode="after")
+    def valid_scope(self) -> TraverseRelationshipsInput:
+        if not self.entity_ids and self.entity_selector is None:
+            raise ValueError("entity_ids or entity_selector is required")
+        return self
+
+
+ToolInput = Annotated[
+    QueryMetricSeriesInput
+    | CalculateMetricChangeInput
+    | RankEntityContributionsInput
+    | QueryRelatedRecordsInput
+    | SemanticDocumentSearchInput
+    | TraverseRelationshipsInput,
+    Field(union_mode="left_to_right"),
+]
+
+TOOL_INPUT_TYPES: dict[InvestigationToolKind, type[ToolArguments]] = {
+    InvestigationToolKind.QUERY_METRIC_SERIES: QueryMetricSeriesInput,
+    InvestigationToolKind.CALCULATE_METRIC_CHANGE: CalculateMetricChangeInput,
+    InvestigationToolKind.RANK_ENTITY_CONTRIBUTIONS: RankEntityContributionsInput,
+    InvestigationToolKind.QUERY_RELATED_RECORDS: QueryRelatedRecordsInput,
+    InvestigationToolKind.SEMANTIC_DOCUMENT_SEARCH: SemanticDocumentSearchInput,
+    InvestigationToolKind.TRAVERSE_RELATIONSHIPS: TraverseRelationshipsInput,
+}
+
+
+class InvestigationToolCall(StrictModel):
     tool: InvestigationToolKind
-    arguments: dict[str, Any] = Field(default_factory=dict)
+    arguments: ToolInput | dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_arguments_for_tool(self) -> InvestigationToolCall:
+        input_type = TOOL_INPUT_TYPES[self.tool]
+        if not isinstance(self.arguments, input_type):
+            self.arguments = input_type.model_validate(self.arguments)
+        return self
+
+
+class MetricObservationOutput(StrictModel):
+    evidence_id: UUID
+    observation_id: UUID
+    entity_id: UUID | None
+    entity_name: str | None
+    period_start: date
+    period_end: date
+    value: str
+    unit: str
+
+
+class MetricSeriesOutput(StrictModel):
+    observations: list[MetricObservationOutput]
+
+
+class CalculationOutput(StrictModel):
+    operation: str
+    formula: str
+    inputs: dict[str, str]
+    result: str | None
+    input_evidence_ids: list[UUID]
+
+
+class ContributionOutput(StrictModel):
+    entity_id: UUID
+    entity_name: str
+    comparison_value: str
+    current_value: str
+    change: str
+    contribution_percentage: str | None
+    input_evidence_ids: list[UUID]
+
+
+class ContributionRankingOutput(StrictModel):
+    total_change: str
+    contributions: list[ContributionOutput]
 
 
 class InvestigationToolResult(BaseModel):
@@ -164,16 +334,109 @@ class ExecutiveBrief(BaseModel):
     recommended_follow_up_questions: list[str] = Field(default_factory=list)
 
 
-class InvestigationPlanStep(BaseModel):
+class InvestigationPlanStep(StrictModel):
     sequence: int = Field(ge=1)
     description: str = Field(min_length=1)
+    required: bool = True
+    depends_on: list[Annotated[int, Field(ge=1)]] = Field(default_factory=list)
     tool_call: InvestigationToolCall
 
 
-class InvestigationPlan(BaseModel):
+class InvestigationPlan(StrictModel):
     intent: InvestigationIntent
     steps: list[InvestigationPlanStep] = Field(default_factory=list, max_length=8)
     created_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def valid_order_and_dependencies(self) -> InvestigationPlan:
+        if not self.steps:
+            raise ValueError("Investigation plans must contain at least one step")
+        sequences = [step.sequence for step in self.steps]
+        if sequences != list(range(1, len(self.steps) + 1)):
+            raise ValueError("Plan step sequences must be contiguous and ordered")
+        for step in self.steps:
+            if any(dependency not in sequences for dependency in step.depends_on):
+                raise ValueError("Plan dependencies must reference existing steps")
+            if any(dependency >= step.sequence for dependency in step.depends_on):
+                raise ValueError("Plan dependencies must reference earlier steps")
+            if len(set(step.depends_on)) != len(step.depends_on):
+                raise ValueError("Plan dependencies must be unique")
+        return self
+
+
+class InvestigationCreateRequest(StrictModel):
+    question: str = Field(min_length=3, max_length=2000)
+
+
+class InvestigationCreatedResponse(BaseModel):
+    id: UUID
+    question: str
+    status: InvestigationStatus
+    created_at: datetime
+
+
+class InvestigationStepResponse(BaseModel):
+    sequence: int
+    tool: str
+    status: InvestigationStepStatus
+    input: dict[str, Any]
+    output: dict[str, Any] | None
+    error: str | None
+
+
+class EvidenceItemResponse(BaseModel):
+    id: UUID
+    step_id: UUID | None
+    evidence_kind: str
+    source_kind: str
+    source_id: str | None
+    provenance_group: str
+    source_locator: dict[str, Any]
+    related_entity_ids: list[str]
+    content: str | None
+    payload: dict[str, Any]
+    observed_at: datetime | None
+
+
+class ClaimResponse(BaseModel):
+    id: UUID
+    classification: ClaimClassification
+    statement: str
+    confidence: float | None
+    formula: str | None
+    details: dict[str, Any]
+    validation_status: ClaimValidationStatus
+    evidence_ids: list[UUID] = Field(default_factory=list)
+
+
+class InvestigationDetailResponse(InvestigationCreatedResponse):
+    updated_at: datetime
+    started_at: datetime | None
+    completed_at: datetime | None
+    failure_code: str | None
+    error: str | None
+    intent: dict[str, Any] | None
+    assumptions: list[str]
+    plan: dict[str, Any] | None
+    execution_usage: dict[str, Any]
+    steps: list[InvestigationStepResponse]
+    claims: list[ClaimResponse]
+    evidence: list[EvidenceItemResponse]
+    executive_brief: ExecutiveBrief | None
+    evidence_graph: EvidenceGraph
+
+
+class InvestigationHistoryItem(InvestigationCreatedResponse):
+    updated_at: datetime
+    started_at: datetime | None
+    completed_at: datetime | None
+    intent_summary: str | None
+    brief_preview: str | None
+
+
+class InvestigationHistoryResponse(BaseModel):
+    items: list[InvestigationHistoryItem]
+    next_cursor: str | None = None
 
 
 def validate_executive_brief_references(

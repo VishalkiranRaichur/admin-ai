@@ -20,10 +20,10 @@ from app.schemas.investigation import (
 )
 
 
-def test_only_ask_is_active_during_phase_one() -> None:
+def test_investigate_is_active_during_phase_two() -> None:
     assert CAPABILITY_STATES == {
         Capability.ASK: CapabilityState.ACTIVE,
-        Capability.INVESTIGATE: CapabilityState.FOUNDATION,
+        Capability.INVESTIGATE: CapabilityState.ACTIVE,
         Capability.WATCH: CapabilityState.INACTIVE,
         Capability.ACT: CapabilityState.INACTIVE,
     }
@@ -35,9 +35,7 @@ def test_investigation_plan_is_bounded_to_eight_steps() -> None:
         InvestigationPlanStep(
             sequence=index,
             description=f"Step {index}",
-            tool_call=InvestigationToolCall(
-                tool=InvestigationToolKind.SEMANTIC_DOCUMENT_SEARCH
-            ),
+            tool_call=InvestigationToolCall(tool=InvestigationToolKind.SEMANTIC_DOCUMENT_SEARCH),
         )
         for index in range(1, 10)
     ]
