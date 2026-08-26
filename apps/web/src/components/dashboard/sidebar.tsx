@@ -2,7 +2,7 @@
 
 import {
   FileText,
-  Lightbulb,
+  SearchCheck,
   MessageSquare,
   Plus,
   Settings,
@@ -26,9 +26,9 @@ const navItems = [
     icon: FileText,
   },
   {
-    href: "/dashboard/insights",
-    label: "Insights",
-    icon: Lightbulb,
+    href: "/dashboard/investigate",
+    label: "Investigate",
+    icon: SearchCheck,
   },
   {
     href: "/dashboard/settings",
@@ -39,9 +39,35 @@ const navItems = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const investigating = pathname.startsWith("/dashboard/investigate");
 
   return (
-    <aside className="hidden h-screen w-[230px] flex-shrink-0 flex-col overflow-hidden border-r border-white/[0.055] bg-sidebar text-sidebar-foreground md:flex">
+    <>
+      <header className="flex h-14 flex-shrink-0 items-center justify-between border-b border-white/[0.055] bg-sidebar px-4 text-sidebar-foreground md:hidden">
+        <Link href="/dashboard/chat" className="flex items-center gap-2">
+          <div className="flex h-7 w-7 items-center justify-center rounded-lg border border-[#7c7cf8]/20 bg-[#7c7cf8]/10">
+            <Zap className="h-3.5 w-3.5 text-[#7c7cf8]" strokeWidth={2.5} />
+          </div>
+          <span className="text-sm font-semibold">ORION</span>
+        </Link>
+        <nav className="flex items-center gap-1" aria-label="Mobile dashboard navigation">
+          {navItems.slice(0, 3).map(({ href, label, icon: Icon }) => {
+            const active = pathname === href || pathname.startsWith(`${href}/`);
+            return (
+              <Link
+                key={href}
+                href={href}
+                aria-label={label}
+                className={`flex h-9 w-9 items-center justify-center rounded-lg transition ${active ? "bg-white/[0.07] text-[#8f8fff]" : "text-sidebar-foreground/55 hover:text-white"}`}
+              >
+                <Icon className="h-4 w-4" />
+              </Link>
+            );
+          })}
+        </nav>
+      </header>
+
+      <aside className="hidden h-screen w-[230px] flex-shrink-0 flex-col overflow-hidden border-r border-white/[0.055] bg-sidebar text-sidebar-foreground md:flex">
 
       {/* Logo */}
       <div className="flex-shrink-0 px-5 pb-1 pt-7">
@@ -57,7 +83,7 @@ export function Sidebar() {
           </div>
 
           <span className="text-[13.5px] font-semibold tracking-tight">
-            Admin AI
+            ORION
           </span>
         </Link>
       </div>
@@ -65,14 +91,14 @@ export function Sidebar() {
       {/* New Chat */}
       <div className="flex-shrink-0 px-3 pb-1 pt-6">
         <Link
-          href="/dashboard/chat"
+          href={investigating ? "/dashboard/investigate" : "/dashboard/chat"}
           className="flex w-full items-center gap-[9px] rounded-[10px] border border-[#7c7cf8]/20 bg-[#7c7cf8]/10 px-3 py-[7px] text-[13px] font-medium text-[#7c7cf8] transition-all duration-150 hover:bg-[#7c7cf8]/15 active:scale-[0.98]"
         >
           <Plus
             className="h-[14px] w-[14px]"
             strokeWidth={2.5}
           />
-          New Chat
+          {investigating ? "New investigation" : "New conversation"}
         </Link>
       </div>
 
@@ -126,6 +152,7 @@ export function Sidebar() {
       <div className="flex-shrink-0 border-t border-white/[0.055] px-3 py-[14px]">
         <SidebarUser />
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }

@@ -25,6 +25,26 @@ export type AskResponse = {
   sources: AskSource[];
 };
 
+export type ApiErrorDetail =
+  | string
+  | {
+      message?: string;
+      investigation_id?: string;
+      [key: string]: unknown;
+    };
+
+export class ApiError extends Error {
+  status: number;
+  detail?: ApiErrorDetail;
+
+  constructor(message: string, status: number, detail?: ApiErrorDetail) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
 
@@ -32,21 +52,27 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     response = await fetch(apiUrl(path), init);
   } catch {
     throw new Error(
-      "Cannot reach the Admin AI API. Make sure the backend and local services are running."
+      "Cannot reach the ORION API. Make sure the backend and local services are running."
     );
   }
 
   if (!response.ok) {
     let message = `Request failed (${response.status})`;
+    let detail: ApiErrorDetail | undefined;
 
     try {
-      const body = (await response.json()) as { detail?: string };
-      message = body.detail ?? message;
+      const body = (await response.json()) as { detail?: ApiErrorDetail };
+      detail = body.detail;
+      if (typeof detail === "string") {
+        message = detail;
+      } else if (detail && typeof detail.message === "string") {
+        message = detail.message;
+      }
     } catch {
       // Keep the status-based fallback for non-JSON responses.
     }
 
-    throw new Error(message);
+    throw new ApiError(message, response.status, detail);
   }
 
   return (await response.json()) as T;

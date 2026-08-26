@@ -378,10 +378,15 @@ class InvestigationCreatedResponse(BaseModel):
 class InvestigationStepResponse(BaseModel):
     sequence: int
     tool: str
+    description: str
+    required: bool
+    depends_on: list[int]
     status: InvestigationStepStatus
     input: dict[str, Any]
     output: dict[str, Any] | None
     error: str | None
+    started_at: datetime | None
+    completed_at: datetime | None
 
 
 class EvidenceItemResponse(BaseModel):
@@ -432,6 +437,8 @@ class InvestigationHistoryItem(InvestigationCreatedResponse):
     completed_at: datetime | None
     intent_summary: str | None
     brief_preview: str | None
+    confidence_score: float | None
+    confidence_level: ExecutiveBriefConfidenceLevel | None
 
 
 class InvestigationHistoryResponse(BaseModel):

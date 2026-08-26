@@ -4,7 +4,6 @@ import {
   ArrowUp,
   BookOpen,
   FileText,
-  Paperclip,
   Zap,
 } from "lucide-react";
 import Link from "next/link";
@@ -55,7 +54,7 @@ export default function ChatPage() {
       setError(
         err instanceof Error
           ? err.message
-          : "Something went wrong while asking Admin AI."
+          : "Something went wrong while asking ORION."
       );
     } finally {
       setLoading(false);
@@ -71,12 +70,12 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-[#09090d] text-white">
+    <div className="flex h-[calc(100dvh-3.5rem)] flex-col overflow-hidden bg-[#09090d] text-white md:h-screen">
       {/* Header */}
       <header className="flex flex-shrink-0 items-center justify-between border-b border-white/[0.055] bg-[#09090d]/90 px-9 py-4 backdrop-blur-sm">
         <div>
           <h1 className="text-[14px] font-semibold tracking-tight">
-            Ask Admin AI
+            Ask ORION
           </h1>
 
           <div className="mt-[3px] flex items-center gap-1.5">
@@ -148,7 +147,7 @@ export default function ChatPage() {
 
               <div className="pt-1">
                 <p className="text-[12px] font-semibold text-[#8c8ca8]">
-                  Admin AI
+                  ORION
                 </p>
 
                 <div className="mt-4 flex items-center gap-2">
@@ -169,7 +168,7 @@ export default function ChatPage() {
               <div className="min-w-0 flex-1">
                 <div className="mb-4">
                   <span className="text-[12px] font-semibold text-[#8c8ca8]">
-                    Admin AI
+                    ORION
                   </span>
                 </div>
 
@@ -368,20 +367,6 @@ export default function ChatPage() {
             {/* Composer toolbar */}
             <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between px-4 pb-3">
               <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  className="flex items-center gap-[7px] rounded-lg px-[9px] py-[5px] text-[#8c8ca8]/60 transition-colors hover:bg-white/[0.05] hover:text-[#8c8ca8]"
-                >
-                  <Paperclip
-                    className="h-[14px] w-[14px]"
-                    strokeWidth={1.75}
-                  />
-
-                  <span className="text-[12px] font-medium">
-                    Attach
-                  </span>
-                </button>
-
                 <Link
                   href="/dashboard/documents"
                   className="flex items-center gap-[7px] rounded-lg px-[9px] py-[5px] text-[#8c8ca8]/60 transition-colors hover:bg-white/[0.05] hover:text-[#8c8ca8]"
@@ -417,7 +402,7 @@ export default function ChatPage() {
           </div>
 
           <p className="mt-[10px] text-center text-[11px] text-[#8c8ca8]/30">
-            Admin AI may make mistakes. Verify important information
+            ORION may make mistakes. Verify important information
             against the original source documents.
           </p>
         </div>

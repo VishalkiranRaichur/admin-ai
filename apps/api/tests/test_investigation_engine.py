@@ -83,6 +83,47 @@ def test_execution_budget_rejects_calls_past_limit(monkeypatch) -> None:
         budget.consume_model()
 
 
+def test_history_confidence_is_derived_from_valid_brief() -> None:
+    score, level = investigations_router._brief_confidence(
+        {
+            "what_happened": {"text": "Revenue declined.", "claim_ids": [str(uuid.uuid4())]},
+            "confidence": {
+                "score": 0.84,
+                "level": "high",
+                "rationale": "Measured evidence is validated.",
+            },
+        }
+    )
+
+    assert score == 0.84
+    assert level == "high"
+    assert investigations_router._brief_confidence({"invalid": True}) == (None, None)
+
+
+def test_detail_step_metadata_uses_plan_and_safe_fallbacks() -> None:
+    plan = {
+        "steps": [
+            {
+                "sequence": 2,
+                "description": "Calculate the revenue change",
+                "required": False,
+                "depends_on": [1],
+            }
+        ]
+    }
+
+    assert investigations_router._step_metadata(plan, 2, "calculate_metric_change") == (
+        "Calculate the revenue change",
+        False,
+        [1],
+    )
+    assert investigations_router._step_metadata(None, 1, "query_metric_series") == (
+        "Query Metric Series",
+        True,
+        [],
+    )
+
+
 class EmptyScalarResult:
     def scalars(self) -> list:
         return []

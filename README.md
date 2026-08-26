@@ -1,6 +1,7 @@
-# Admin AI
+# ORION
 
-AI-powered operating system for startups and small companies. Upload internal documents, ask business questions in natural language, and get insights backed by source citations.
+AI executive intelligence for companies. Upload internal documents, ask grounded questions,
+and run bounded business investigations that produce validated claims and Executive Briefs.
 
 ## Stack
 
@@ -109,9 +110,7 @@ cd apps/web && npm run lint
 
 ## Roadmap
 
-- **Phase 0** (current): Monorepo, Docker, CI, auth, dashboard shell
-- **Phase 1**: Document upload + ingestion pipeline
-- **Phase 2**: Chat + RAG with citations
-- **Phase 3**: Insight generation
-- **Phase 4**: Weekly reports + polish
-- **Phase 5**: Integrations (Gmail, Slack, Drive, Calendar)
+- **Phase 1**: Document ingestion, semantic search, RAG, and investigation foundations
+- **Phase 2**: Bounded evidence-backed investigation engine and Executive Briefs
+- **Phase 3**: Polished Investigate workspace and live result inspection
+- **Phase 4+**: WATCH monitoring, controlled ACT workflows, and external integrations

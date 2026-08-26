@@ -17,6 +17,7 @@ from app.investigations.claims import build_evidence_graph
 from app.models import Claim, ClaimEvidence, EvidenceItem, Investigation, InvestigationStep
 from app.schemas.investigation import (
     ExecutiveBrief,
+    ExecutiveBriefConfidenceLevel,
     InvestigationCreatedResponse,
     InvestigationCreateRequest,
     InvestigationDetailResponse,
@@ -26,6 +27,40 @@ from app.schemas.investigation import (
 
 router = APIRouter()
 celery_client = Celery("orion-api", broker=settings.celery_broker_url)
+
+
+def _brief_confidence(
+    brief_payload: dict | None,
+) -> tuple[float | None, ExecutiveBriefConfidenceLevel | None]:
+    if not brief_payload:
+        return None, None
+    try:
+        brief = ExecutiveBrief.model_validate(brief_payload)
+    except ValueError:
+        return None, None
+    return brief.confidence.score, brief.confidence.level
+
+
+def _step_metadata(
+    plan_payload: dict | None, sequence: int, tool: str
+) -> tuple[str, bool, list[int]]:
+    plan_steps = plan_payload.get("steps", []) if isinstance(plan_payload, dict) else []
+    for item in plan_steps:
+        if isinstance(item, dict) and item.get("sequence") == sequence:
+            description = item.get("description")
+            depends_on = item.get("depends_on", [])
+            return (
+                (
+                    description
+                    if isinstance(description, str) and description
+                    else tool.replace("_", " ").title()
+                ),
+                item.get("required") is not False,
+                [value for value in depends_on if isinstance(value, int)]
+                if isinstance(depends_on, list)
+                else [],
+            )
+    return tool.replace("_", " ").title(), True, []
 
 
 def _encode_cursor(created_at: datetime, investigation_id: uuid.UUID) -> str:
@@ -115,20 +150,24 @@ async def list_investigations(
     )
     has_more = len(rows) > limit
     rows = rows[:limit]
-    items = [
-        InvestigationHistoryItem(
-            id=item.id,
-            question=item.question,
-            status=item.status,
-            created_at=item.created_at,
-            updated_at=item.updated_at,
-            started_at=item.started_at,
-            completed_at=item.completed_at,
-            intent_summary=item.intent.get("kind") if item.intent else None,
-            brief_preview=item.summary,
+    items = []
+    for item in rows:
+        confidence_score, confidence_level = _brief_confidence(item.executive_brief)
+        items.append(
+            InvestigationHistoryItem(
+                id=item.id,
+                question=item.question,
+                status=item.status,
+                created_at=item.created_at,
+                updated_at=item.updated_at,
+                started_at=item.started_at,
+                completed_at=item.completed_at,
+                intent_summary=item.intent.get("kind") if item.intent else None,
+                brief_preview=item.summary,
+                confidence_score=confidence_score,
+                confidence_level=confidence_level,
+            )
         )
-        for item in rows
-    ]
     next_cursor = _encode_cursor(rows[-1].created_at, rows[-1].id) if has_more else None
     return InvestigationHistoryResponse(items=items, next_cursor=next_cursor)
 
@@ -191,6 +230,26 @@ async def get_investigation(
     for link in links:
         evidence_by_claim.setdefault(link.claim_id, []).append(link.evidence_id)
     graph = await build_evidence_graph(db, investigation_id)
+    step_responses = []
+    for step in steps:
+        description, required, depends_on = _step_metadata(
+            investigation.plan, step.sequence, step.tool
+        )
+        step_responses.append(
+            {
+                "sequence": step.sequence,
+                "tool": step.tool,
+                "description": description,
+                "required": required,
+                "depends_on": depends_on,
+                "status": step.status,
+                "input": step.input,
+                "output": step.output,
+                "error": step.error,
+                "started_at": step.started_at,
+                "completed_at": step.completed_at,
+            }
+        )
     return InvestigationDetailResponse(
         id=investigation.id,
         question=investigation.question,
@@ -205,17 +264,7 @@ async def get_investigation(
         assumptions=investigation.assumptions,
         plan=investigation.plan,
         execution_usage=investigation.execution_usage,
-        steps=[
-            {
-                "sequence": step.sequence,
-                "tool": step.tool,
-                "status": step.status,
-                "input": step.input,
-                "output": step.output,
-                "error": step.error,
-            }
-            for step in steps
-        ],
+        steps=step_responses,
         claims=[
             {
                 "id": claim.id,
