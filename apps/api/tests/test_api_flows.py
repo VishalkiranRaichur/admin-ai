@@ -1,3 +1,4 @@
+import uuid
 from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
@@ -6,6 +7,16 @@ import app.routers.ask as ask_router
 import app.routers.documents as documents_router
 from app.db import get_db
 from app.main import app
+from app.models import Workspace
+from app.workspaces import get_active_workspace, get_mutable_workspace
+
+WORKSPACE_ID = uuid.uuid4()
+WORKSPACE = Workspace(
+    id=WORKSPACE_ID,
+    name="Test Company",
+    owner_subject="local-dev",
+    is_demo=False,
+)
 
 
 class FakeSession:
@@ -38,6 +49,10 @@ def override_database(session: FakeSession):
     return _override
 
 
+async def override_workspace() -> Workspace:
+    return WORKSPACE
+
+
 def test_ask_returns_grounded_answer(monkeypatch) -> None:
     session = FakeSession()
 
@@ -57,6 +72,7 @@ def test_ask_returns_grounded_answer(monkeypatch) -> None:
 
     monkeypatch.setattr(ask_router, "answer_question", fake_answer_question)
     app.dependency_overrides[get_db] = override_database(session)
+    app.dependency_overrides[get_active_workspace] = override_workspace
 
     try:
         response = TestClient(app).post(
@@ -85,6 +101,7 @@ def test_upload_stores_and_processes_document(monkeypatch) -> None:
     monkeypatch.setattr(documents_router, "upload_file", fake_upload_file)
     monkeypatch.setattr(documents_router, "process_document", fake_process_document)
     app.dependency_overrides[get_db] = override_database(session)
+    app.dependency_overrides[get_mutable_workspace] = override_workspace
 
     try:
         response = TestClient(app).post(
@@ -97,6 +114,7 @@ def test_upload_stores_and_processes_document(monkeypatch) -> None:
     assert response.status_code == 201
     assert response.json()["filename"] == "notes.txt"
     assert response.json()["status"] == "processed"
+    assert response.json()["storage_key"].startswith(f"workspaces/{WORKSPACE_ID}/documents/")
     assert session.committed is True
 
 
@@ -108,6 +126,7 @@ def test_upload_reports_storage_outage(monkeypatch) -> None:
 
     monkeypatch.setattr(documents_router, "upload_file", unavailable_storage)
     app.dependency_overrides[get_db] = override_database(session)
+    app.dependency_overrides[get_mutable_workspace] = override_workspace
 
     try:
         response = TestClient(app).post(

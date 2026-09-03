@@ -8,6 +8,7 @@ import { useCallback, useEffect, useState } from "react";
 import { InvestigationComposer } from "@/components/investigations/investigation-composer";
 import { InvestigationHistory } from "@/components/investigations/investigation-history";
 import { ApiError } from "@/lib/api";
+import { useWorkspace } from "@/components/workspace-provider";
 import {
   createInvestigation,
   listInvestigations,
@@ -15,6 +16,7 @@ import {
 } from "@/lib/investigations";
 
 export default function InvestigatePage() {
+  const { cacheKey } = useWorkspace();
   const router = useRouter();
   const [items, setItems] = useState<InvestigationHistoryItem[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
@@ -42,8 +44,10 @@ export default function InvestigatePage() {
   }, []);
 
   useEffect(() => {
+    setItems([]);
+    setCursor(null);
     void loadHistory();
-  }, [loadHistory]);
+  }, [cacheKey, loadHistory]);
 
   async function handleCreate(question: string) {
     try {

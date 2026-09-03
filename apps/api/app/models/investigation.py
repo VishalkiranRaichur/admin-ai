@@ -30,8 +30,15 @@ def utc_now() -> datetime:
 
 class Investigation(Base):
     __tablename__ = "investigations"
+    __table_args__ = (
+        Index("ix_investigations_workspace_created_at", "workspace_id", "created_at"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    created_by_subject: Mapped[str] = mapped_column(String(255), nullable=False)
     question: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(
         String(32), nullable=False, default=InvestigationStatus.QUEUED.value, index=True
@@ -59,9 +66,13 @@ class InvestigationStep(Base):
     __tablename__ = "investigation_steps"
     __table_args__ = (
         UniqueConstraint("investigation_id", "sequence", name="uq_investigation_step_sequence"),
+        Index("ix_investigation_steps_workspace_investigation", "workspace_id", "investigation_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
     investigation_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("investigations.id", ondelete="CASCADE"),
@@ -83,10 +94,16 @@ class InvestigationStep(Base):
 class Entity(Base):
     __tablename__ = "entities"
     __table_args__ = (
-        UniqueConstraint("entity_type", "external_key", name="uq_entity_type_external_key"),
+        UniqueConstraint(
+            "workspace_id", "entity_type", "external_key", name="uq_entity_workspace_type_key"
+        ),
+        Index("ix_entities_workspace_type", "workspace_id", "entity_type"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
     entity_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     external_key: Mapped[str] = mapped_column(String(255), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -101,8 +118,15 @@ class Entity(Base):
 
 class EntityRelationship(Base):
     __tablename__ = "relationships"
+    __table_args__ = (
+        Index("ix_relationships_workspace_source", "workspace_id", "source_entity_id"),
+        Index("ix_relationships_workspace_target", "workspace_id", "target_entity_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
     source_entity_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("entities.id", ondelete="CASCADE"),
@@ -126,8 +150,19 @@ class EntityRelationship(Base):
 
 class MetricObservation(Base):
     __tablename__ = "metric_observations"
+    __table_args__ = (
+        Index(
+            "ix_metric_observations_workspace_metric_period",
+            "workspace_id",
+            "metric_key",
+            "period_start",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
     metric_key: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     entity_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
@@ -149,13 +184,27 @@ class MetricObservation(Base):
 class BusinessRecord(Base):
     __tablename__ = "business_records"
     __table_args__ = (
-        UniqueConstraint("record_type", "external_key", name="uq_business_record_type_key"),
+        UniqueConstraint(
+            "workspace_id",
+            "record_type",
+            "external_key",
+            name="uq_business_record_workspace_type_key",
+        ),
+        Index(
+            "ix_business_records_workspace_type_occurred",
+            "workspace_id",
+            "record_type",
+            "occurred_at",
+        ),
         Index("ix_business_records_type_occurred", "record_type", "occurred_at"),
         Index("ix_business_records_primary_occurred", "primary_entity_id", "occurred_at"),
         Index("ix_business_records_related_occurred", "related_entity_id", "occurred_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
     record_type: Mapped[str] = mapped_column(String(64), nullable=False)
     external_key: Mapped[str] = mapped_column(String(255), nullable=False)
     primary_entity_id: Mapped[uuid.UUID] = mapped_column(
@@ -176,8 +225,14 @@ class BusinessRecord(Base):
 
 class EvidenceItem(Base):
     __tablename__ = "evidence_items"
+    __table_args__ = (
+        Index("ix_evidence_items_workspace_investigation", "workspace_id", "investigation_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
     investigation_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("investigations.id", ondelete="CASCADE"),
@@ -203,8 +258,14 @@ class EvidenceItem(Base):
 
 class Claim(Base):
     __tablename__ = "claims"
+    __table_args__ = (
+        Index("ix_claims_workspace_investigation", "workspace_id", "investigation_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
     investigation_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("investigations.id", ondelete="CASCADE"),

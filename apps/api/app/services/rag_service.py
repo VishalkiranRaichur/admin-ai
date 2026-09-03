@@ -1,3 +1,5 @@
+import uuid
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -7,6 +9,7 @@ from app.services.search_service import semantic_search
 
 async def answer_question(
     db: AsyncSession,
+    workspace_id: uuid.UUID,
     question: str,
     limit: int = 5,
 ) -> dict:
@@ -17,6 +20,7 @@ async def answer_question(
 
     chunks = await semantic_search(
         db=db,
+        workspace_id=workspace_id,
         query=cleaned_question,
         limit=limit,
     )
@@ -28,26 +32,9 @@ async def answer_question(
         }
 
     context = "\n\n---\n\n".join(
-        chunk.content
-        for chunk in chunks
+        f"SOURCE {index}: {chunk.document.filename}\n{chunk.content}"
+        for index, chunk in enumerate(chunks, start=1)
     )
-
-    prompt = f"""
-You are Admin AI.
-
-Answer the user's question using only the provided document context.
-
-If the answer is not supported by the context,
-say that you could not find enough information in the uploaded documents.
-
-Do not invent facts.
-
-DOCUMENT CONTEXT:
-{context}
-
-USER QUESTION:
-{cleaned_question}
-"""
 
     client = get_openai_client()
 
@@ -55,9 +42,20 @@ USER QUESTION:
         model=settings.chat_model,
         messages=[
             {
+                "role": "system",
+                "content": (
+                    "You are Admin AI. Answer using only the retrieved document context. Give the "
+                    "strongest answer directly supported by responsive facts in that context. "
+                    "Clearly distinguish observed facts from likely explanations or inferences, "
+                    "and state uncertainty when the documents do not prove causation. A partial, "
+                    "qualified answer is preferable to a refusal. Refuse only when the context "
+                    "contains no facts responsive to the question. Do not invent facts."
+                ),
+            },
+            {
                 "role": "user",
-                "content": prompt,
-            }
+                "content": f"DOCUMENT CONTEXT:\n{context}\n\nUSER QUESTION:\n{cleaned_question}",
+            },
         ],
         temperature=0,
     )

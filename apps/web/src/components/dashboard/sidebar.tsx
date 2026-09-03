@@ -13,6 +13,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { SidebarUser } from "@/components/dashboard/sidebar-user";
+import { WorkspaceSwitcher } from "@/components/dashboard/workspace-switcher";
 
 const navItems = [
   {
@@ -50,6 +51,8 @@ export function Sidebar() {
           </div>
           <span className="text-sm font-semibold">ORION</span>
         </Link>
+        <div className="flex items-center gap-2">
+          <WorkspaceSwitcher />
         <nav className="flex items-center gap-1" aria-label="Mobile dashboard navigation">
           {navItems.slice(0, 3).map(({ href, label, icon: Icon }) => {
             const active = pathname === href || pathname.startsWith(`${href}/`);
@@ -65,6 +68,7 @@ export function Sidebar() {
             );
           })}
         </nav>
+        </div>
       </header>
 
       <aside className="hidden h-screen w-[230px] flex-shrink-0 flex-col overflow-hidden border-r border-white/[0.055] bg-sidebar text-sidebar-foreground md:flex">
@@ -86,6 +90,10 @@ export function Sidebar() {
             ORION
           </span>
         </Link>
+      </div>
+
+      <div className="flex-shrink-0 px-3 pt-4">
+        <WorkspaceSwitcher />
       </div>
 
       {/* New Chat */}

@@ -11,12 +11,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.demo.orion_importer import import_orion_company
 from app.investigations.orchestrator import InvestigationOrchestrator, mark_failed
-from app.models import Claim, Investigation
+from app.models import DEMO_WORKSPACE_ID, Claim, Investigation
 from app.services.document_ingestion import DeleteAdapter, UploadAdapter
 
 
 async def _run_investigation(db: AsyncSession, question: str) -> tuple[Investigation, list[Claim]]:
-    investigation = Investigation(question=question)
+    investigation = Investigation(
+        question=question,
+        workspace_id=DEMO_WORKSPACE_ID,
+        created_by_subject="demo-evaluation",
+    )
     db.add(investigation)
     await db.commit()
     await db.refresh(investigation)

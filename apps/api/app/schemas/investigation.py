@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from enum import StrEnum
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 
 class StrictModel(BaseModel):
@@ -190,7 +190,7 @@ TOOL_INPUT_TYPES: dict[InvestigationToolKind, type[ToolArguments]] = {
 
 class InvestigationToolCall(StrictModel):
     tool: InvestigationToolKind
-    arguments: ToolInput | dict[str, Any] = Field(default_factory=dict)
+    arguments: ToolInput = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_arguments_for_tool(self) -> InvestigationToolCall:
@@ -198,6 +198,64 @@ class InvestigationToolCall(StrictModel):
         if not isinstance(self.arguments, input_type):
             self.arguments = input_type.model_validate(self.arguments)
         return self
+
+
+class PlannerQueryRelatedRecordsInput(QueryRelatedRecordsInput):
+    entity_selector: Literal[DynamicEntitySelector.TOP_CONTRIBUTOR]
+
+
+class PlannerTraverseRelationshipsInput(TraverseRelationshipsInput):
+    entity_selector: Literal[DynamicEntitySelector.TOP_CONTRIBUTOR]
+
+
+class PlannerQueryMetricSeriesToolCall(StrictModel):
+    tool: Literal[InvestigationToolKind.QUERY_METRIC_SERIES]
+    arguments: QueryMetricSeriesInput
+
+
+class PlannerCalculateMetricChangeToolCall(StrictModel):
+    tool: Literal[InvestigationToolKind.CALCULATE_METRIC_CHANGE]
+    arguments: CalculateMetricChangeInput
+
+
+class PlannerRankEntityContributionsToolCall(StrictModel):
+    tool: Literal[InvestigationToolKind.RANK_ENTITY_CONTRIBUTIONS]
+    arguments: RankEntityContributionsInput
+
+
+class PlannerQueryRelatedRecordsToolCall(StrictModel):
+    tool: Literal[InvestigationToolKind.QUERY_RELATED_RECORDS]
+    arguments: PlannerQueryRelatedRecordsInput
+
+
+class PlannerSemanticDocumentSearchToolCall(StrictModel):
+    tool: Literal[InvestigationToolKind.SEMANTIC_DOCUMENT_SEARCH]
+    arguments: SemanticDocumentSearchInput
+
+
+class PlannerTraverseRelationshipsToolCall(StrictModel):
+    tool: Literal[InvestigationToolKind.TRAVERSE_RELATIONSHIPS]
+    arguments: PlannerTraverseRelationshipsInput
+
+
+PlannerToolCall = Annotated[
+    PlannerQueryMetricSeriesToolCall
+    | PlannerCalculateMetricChangeToolCall
+    | PlannerRankEntityContributionsToolCall
+    | PlannerQueryRelatedRecordsToolCall
+    | PlannerSemanticDocumentSearchToolCall
+    | PlannerTraverseRelationshipsToolCall,
+    Field(union_mode="left_to_right"),
+]
+
+PLANNER_TOOL_INPUT_TYPES: dict[InvestigationToolKind, type[ToolArguments]] = {
+    InvestigationToolKind.QUERY_METRIC_SERIES: QueryMetricSeriesInput,
+    InvestigationToolKind.CALCULATE_METRIC_CHANGE: CalculateMetricChangeInput,
+    InvestigationToolKind.RANK_ENTITY_CONTRIBUTIONS: RankEntityContributionsInput,
+    InvestigationToolKind.QUERY_RELATED_RECORDS: PlannerQueryRelatedRecordsInput,
+    InvestigationToolKind.SEMANTIC_DOCUMENT_SEARCH: SemanticDocumentSearchInput,
+    InvestigationToolKind.TRAVERSE_RELATIONSHIPS: PlannerTraverseRelationshipsInput,
+}
 
 
 class MetricObservationOutput(StrictModel):
@@ -362,6 +420,47 @@ class InvestigationPlan(StrictModel):
             if len(set(step.depends_on)) != len(step.depends_on):
                 raise ValueError("Plan dependencies must be unique")
         return self
+
+
+class PlannerInvestigationPlanStep(StrictModel):
+    sequence: int = Field(ge=1)
+    description: str = Field(min_length=1)
+    required: bool = True
+    depends_on: list[Annotated[int, Field(ge=1)]] = Field(default_factory=list)
+    tool_call: PlannerToolCall
+
+
+class PlannerInvestigationPlan(StrictModel):
+    intent: InvestigationIntent
+    steps: list[PlannerInvestigationPlanStep] = Field(default_factory=list, max_length=8)
+    created_at: datetime | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_tool_contracts(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        for position, step in enumerate(value.get("steps", []), start=1):
+            if not isinstance(step, dict) or not isinstance(step.get("tool_call"), dict):
+                continue
+            tool_call = step["tool_call"]
+            try:
+                tool = InvestigationToolKind(tool_call.get("tool"))
+            except (TypeError, ValueError) as error:
+                raise ValueError(
+                    f"Step {position} uses an unsupported investigation tool"
+                ) from error
+            try:
+                PLANNER_TOOL_INPUT_TYPES[tool].model_validate(tool_call.get("arguments"))
+            except ValidationError as error:
+                message = error.errors(include_url=False)[0]["msg"]
+                raise ValueError(
+                    f"Step {position} has invalid {tool.value} arguments: {message}"
+                ) from error
+        return value
+
+    def to_investigation_plan(self) -> InvestigationPlan:
+        return InvestigationPlan.model_validate(self.model_dump(mode="python"))
 
 
 class InvestigationCreateRequest(StrictModel):

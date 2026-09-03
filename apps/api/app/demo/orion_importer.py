@@ -13,11 +13,13 @@ from sqlalchemy import delete as sa_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
+    DEMO_WORKSPACE_ID,
     BusinessRecord,
     Document,
     Entity,
     EntityRelationship,
     MetricObservation,
+    Workspace,
 )
 from app.services.document_ingestion import DeleteAdapter, UploadAdapter, ingest_document
 
@@ -108,6 +110,9 @@ async def _put(db: AsyncSession, model_type, identifier: uuid.UUID, **values):
         value = model_type(id=identifier, **values)
         db.add(value)
     else:
+        expected_workspace = values.get("workspace_id")
+        if expected_workspace is not None and value.workspace_id != expected_workspace:
+            raise ValueError("A deterministic demo ID is already used outside the demo workspace")
         for key, item in values.items():
             setattr(value, key, item)
     return value
@@ -122,6 +127,16 @@ async def import_orion_company(
     processor: Callable[[bytes, str], Awaitable[dict]],
     negative_control: bool = False,
 ) -> dict[str, int]:
+    await _put(
+        db,
+        Workspace,
+        DEMO_WORKSPACE_ID,
+        name="ORION Demo Company",
+        industry="Software",
+        owner_subject=None,
+        is_demo=True,
+    )
+    await db.flush()
     customers = _read_rows(root / "customers.csv", CustomerRow)
     revenue = _read_rows(root / "revenue.csv", RevenueRow)
     crm = _read_rows(root / "crm_activity.csv", ActivityRow)
@@ -148,17 +163,14 @@ async def import_orion_company(
         excluded_record_ids = [
             demo_id("record", f"support_incident:{incident_id}")
             for incident_id in excluded_incidents
-        ] + [
-            demo_id("record", f"project_update:{project_id}")
-            for project_id in excluded_projects
-        ]
+        ] + [demo_id("record", f"project_update:{project_id}") for project_id in excluded_projects]
         if excluded_record_ids:
             await db.execute(
-                sa_delete(BusinessRecord).where(BusinessRecord.id.in_(excluded_record_ids))
+                sa_delete(BusinessRecord)
+                .where(BusinessRecord.id.in_(excluded_record_ids))
+                .where(BusinessRecord.workspace_id == DEMO_WORKSPACE_ID)
             )
-        excluded_project_rows = [
-            row for row in projects if row.project_id in excluded_projects
-        ]
+        excluded_project_rows = [row for row in projects if row.project_id in excluded_projects]
         excluded_relationship_ids = [
             demo_id("relationship", f"{row.customer_id}:project:{row.project_id}")
             for row in excluded_project_rows
@@ -166,14 +178,18 @@ async def import_orion_company(
         if excluded_relationship_ids:
             await db.execute(
                 sa_delete(EntityRelationship).where(
-                    EntityRelationship.id.in_(excluded_relationship_ids)
+                    EntityRelationship.workspace_id == DEMO_WORKSPACE_ID,
+                    EntityRelationship.id.in_(excluded_relationship_ids),
                 )
             )
-        excluded_entity_ids = [
-            demo_id("project", row.project_id) for row in excluded_project_rows
-        ]
+        excluded_entity_ids = [demo_id("project", row.project_id) for row in excluded_project_rows]
         if excluded_entity_ids:
-            await db.execute(sa_delete(Entity).where(Entity.id.in_(excluded_entity_ids)))
+            await db.execute(
+                sa_delete(Entity).where(
+                    Entity.workspace_id == DEMO_WORKSPACE_ID,
+                    Entity.id.in_(excluded_entity_ids),
+                )
+            )
 
     entities: dict[str, Entity] = {}
     for row in customers:
@@ -181,6 +197,7 @@ async def import_orion_company(
             db,
             Entity,
             demo_id("customer", row.customer_id),
+            workspace_id=DEMO_WORKSPACE_ID,
             entity_type="customer",
             external_key=f"demo:{row.customer_id}",
             name=row.name,
@@ -199,6 +216,7 @@ async def import_orion_company(
         if existing is None:
             existing = await ingest_document(
                 db=db,
+                workspace_id=DEMO_WORKSPACE_ID,
                 file_bytes=path.read_bytes(),
                 filename=path.name,
                 content_type="text/markdown",
@@ -209,6 +227,8 @@ async def import_orion_company(
                 document_id=identifier,
                 commit=False,
             )
+        elif existing.workspace_id != DEMO_WORKSPACE_ID:
+            raise ValueError("A deterministic demo document ID is used outside the demo workspace")
         documents[relative] = existing
 
     for row_number, row in enumerate(revenue, start=2):
@@ -216,6 +236,7 @@ async def import_orion_company(
             db,
             MetricObservation,
             demo_id("observation", f"{row.customer_id}:{row.period_start}"),
+            workspace_id=DEMO_WORKSPACE_ID,
             metric_key="recognized_revenue_usd",
             entity_id=entities[row.customer_id].id,
             period_start=row.period_start,
@@ -244,6 +265,7 @@ async def import_orion_company(
             db,
             BusinessRecord,
             demo_id("record", f"{record_type}:{external_key}"),
+            workspace_id=DEMO_WORKSPACE_ID,
             record_type=record_type,
             external_key=f"demo:{external_key}",
             primary_entity_id=entities[customer_id].id,
@@ -289,6 +311,7 @@ async def import_orion_company(
             db,
             Entity,
             demo_id("project", row.project_id),
+            workspace_id=DEMO_WORKSPACE_ID,
             entity_type="project",
             external_key=f"demo:{row.project_id}",
             name=row.name,
@@ -298,6 +321,7 @@ async def import_orion_company(
             db,
             EntityRelationship,
             demo_id("relationship", f"{row.customer_id}:project:{row.project_id}"),
+            workspace_id=DEMO_WORKSPACE_ID,
             source_entity_id=entities[row.customer_id].id,
             target_entity_id=project.id,
             relationship_type="has_project",
@@ -327,6 +351,7 @@ async def import_orion_company(
             db,
             Entity,
             demo_id("contract", row.contract_id),
+            workspace_id=DEMO_WORKSPACE_ID,
             entity_type="contract",
             external_key=f"demo:{row.contract_id}",
             name=f"{entities[row.customer_id].name} contract",
@@ -337,6 +362,7 @@ async def import_orion_company(
             db,
             EntityRelationship,
             demo_id("relationship", f"{row.customer_id}:contract:{row.contract_id}"),
+            workspace_id=DEMO_WORKSPACE_ID,
             source_entity_id=entities[row.customer_id].id,
             target_entity_id=contract.id,
             relationship_type="has_contract",

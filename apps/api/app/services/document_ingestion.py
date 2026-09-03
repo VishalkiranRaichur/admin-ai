@@ -16,6 +16,7 @@ ProcessorAdapter = Callable[[bytes, str], Awaitable[dict]]
 async def ingest_document(
     *,
     db: AsyncSession,
+    workspace_id: uuid.UUID,
     file_bytes: bytes,
     filename: str,
     content_type: str,
@@ -29,6 +30,7 @@ async def ingest_document(
     """Store, parse, chunk, embed, and persist a document without HTTP concerns."""
     document = Document(
         id=document_id or uuid.uuid4(),
+        workspace_id=workspace_id,
         filename=filename,
         content_type=content_type,
         size_bytes=len(file_bytes),
@@ -43,6 +45,7 @@ async def ingest_document(
         db.add(document)
         await save_chunks(
             db=db,
+            workspace_id=workspace_id,
             document_id=document.id,
             chunks=result["chunks"],
             embeddings=result["embeddings"],

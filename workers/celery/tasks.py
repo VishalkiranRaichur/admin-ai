@@ -54,6 +54,23 @@ async def _fail(
         await mark_failed(db, investigation_id, error, failure_code=code)
 
 
+async def _execute(
+    investigation_id: uuid.UUID, *, transient_retry_available: bool
+) -> None:
+    try:
+        try:
+            await _run(investigation_id)
+        except SoftTimeLimitExceeded as error:
+            await _fail(investigation_id, error, "soft_timeout")
+            raise
+        except Exception as error:
+            if not (_is_transient(error) and transient_retry_available):
+                await _fail(investigation_id, error)
+            raise
+    finally:
+        await engine.dispose()
+
+
 @celery_app.task(
     bind=True,
     name="orion.run_investigation",
@@ -64,14 +81,17 @@ async def _fail(
 def run_investigation(self, investigation_id: str) -> None:
     parsed_id = uuid.UUID(investigation_id)
     try:
-        asyncio.run(_run(parsed_id))
-    except SoftTimeLimitExceeded as error:
-        asyncio.run(_fail(parsed_id, error, "soft_timeout"))
+        asyncio.run(
+            _execute(
+                parsed_id,
+                transient_retry_available=self.request.retries < self.max_retries,
+            )
+        )
+    except SoftTimeLimitExceeded:
         raise
     except Exception as error:
         if _is_transient(error) and self.request.retries < self.max_retries:
             delays = (5, 15, 45)
             delay = delays[self.request.retries] + random.uniform(0, 2)
             raise self.retry(exc=error, countdown=delay) from error
-        asyncio.run(_fail(parsed_id, error))
         raise

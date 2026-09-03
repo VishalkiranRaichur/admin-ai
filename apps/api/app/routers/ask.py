@@ -7,8 +7,10 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
+from app.models import Workspace
 from app.services.embedding_service import OpenAIConfigurationError
 from app.services.rag_service import answer_question
+from app.workspaces import get_active_workspace
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -22,11 +24,13 @@ class AskRequest(BaseModel):
 @router.post("/ask")
 async def ask_question(
     request: AskRequest,
+    workspace: Workspace = Depends(get_active_workspace),
     db: AsyncSession = Depends(get_db),
 ):
     try:
         result = await answer_question(
             db=db,
+            workspace_id=workspace.id,
             question=request.question,
             limit=request.limit,
         )

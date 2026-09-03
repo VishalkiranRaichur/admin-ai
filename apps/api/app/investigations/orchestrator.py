@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,7 +16,7 @@ from app.investigations.planner import (
     canonicalize_plan,
 )
 from app.investigations.tools import ToolExecutor
-from app.models import Investigation, InvestigationStep
+from app.models import Investigation, InvestigationStep, MetricObservation
 from app.schemas.investigation import (
     ClaimClassification,
     ClaimValidationStatus,
@@ -51,7 +51,7 @@ class InvestigationOrchestrator:
         try:
             plan = await self._plan(investigation, budget)
             steps = await self._upsert_steps(investigation, plan)
-            executor = ToolExecutor(self.db, investigation.id, budget)
+            executor = ToolExecutor(self.db, investigation.id, investigation.workspace_id, budget)
             optional_failures: list[str] = []
             steps_by_sequence = {step.sequence: step for step in steps}
             for step, planned in zip(steps, plan.steps, strict=True):
@@ -61,8 +61,7 @@ class InvestigationOrchestrator:
                 unavailable_dependencies = [
                     sequence
                     for sequence in planned.depends_on
-                    if steps_by_sequence[sequence].status
-                    != InvestigationStepStatus.COMPLETED.value
+                    if steps_by_sequence[sequence].status != InvestigationStepStatus.COMPLETED.value
                 ]
                 if unavailable_dependencies:
                     error = RequiredDataError(
@@ -107,7 +106,9 @@ class InvestigationOrchestrator:
                 investigation.updated_at = datetime.now(UTC)
                 await self.db.commit()
 
-            claims = await build_and_validate_claims(self.db, investigation.id)
+            claims = await build_and_validate_claims(
+                self.db, investigation.id, investigation.workspace_id
+            )
             facts = [
                 claim
                 for claim in claims
@@ -126,7 +127,9 @@ class InvestigationOrchestrator:
                 raise RequiredDataError(
                     "Metric investigations require at least one validated derived claim"
                 )
-            brief = await build_executive_brief(self.db, investigation.id, optional_failures)
+            brief = await build_executive_brief(
+                self.db, investigation.id, investigation.workspace_id, optional_failures
+            )
             investigation.executive_brief = brief.model_dump(mode="json")
             investigation.summary = brief.what_happened.text
             investigation.status = InvestigationStatus.COMPLETED.value
@@ -165,7 +168,13 @@ class InvestigationOrchestrator:
         if investigation.plan:
             return canonicalize_plan(InvestigationPlan.model_validate(investigation.plan))
         budget.consume_model()
-        plan = canonicalize_plan(await self.planner.create_plan(investigation.question))
+        metric_periods = await self._workspace_metric_periods(investigation.workspace_id)
+        plan = canonicalize_plan(
+            await self.planner.create_plan(
+                investigation.question,
+                metric_periods=metric_periods,
+            )
+        )
         investigation.intent = plan.intent.model_dump(mode="json")
         investigation.assumptions = plan.intent.assumptions
         investigation.plan = plan.model_dump(mode="json")
@@ -173,6 +182,20 @@ class InvestigationOrchestrator:
         investigation.updated_at = datetime.now(UTC)
         await self.db.commit()
         return plan
+
+    async def _workspace_metric_periods(
+        self, workspace_id: uuid.UUID
+    ) -> tuple[tuple[date, date], ...]:
+        statement = (
+            select(MetricObservation.period_start, MetricObservation.period_end)
+            .where(
+                MetricObservation.workspace_id == workspace_id,
+                MetricObservation.metric_key == "recognized_revenue_usd",
+            )
+            .distinct()
+            .order_by(MetricObservation.period_start, MetricObservation.period_end)
+        )
+        return tuple((await self.db.execute(statement)).all())
 
     async def _upsert_steps(
         self, investigation: Investigation, plan: InvestigationPlan
@@ -196,6 +219,7 @@ class InvestigationOrchestrator:
             step = existing.get(planned.sequence)
             if step is None:
                 step = InvestigationStep(
+                    workspace_id=investigation.workspace_id,
                     investigation_id=investigation.id,
                     sequence=planned.sequence,
                     tool=planned.tool_call.tool.value,

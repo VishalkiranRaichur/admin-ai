@@ -3,8 +3,10 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { getInvestigation, type InvestigationDetail } from "@/lib/investigations";
+import { useWorkspace } from "@/components/workspace-provider";
 
 export function useInvestigation(id: string) {
+  const { cacheKey } = useWorkspace();
   const [investigation, setInvestigation] = useState<InvestigationDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -59,7 +61,7 @@ export function useInvestigation(id: string) {
       if (timer) clearTimeout(timer);
       document.removeEventListener("visibilitychange", handleVisibility);
     };
-  }, [id, refreshKey]);
+  }, [id, refreshKey, cacheKey]);
 
   return { investigation, loading, error, retryNow };
 }

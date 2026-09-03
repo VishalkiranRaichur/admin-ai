@@ -11,10 +11,18 @@ from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import Principal, get_current_principal
 from app.config import settings
 from app.db import get_db
 from app.investigations.claims import build_evidence_graph
-from app.models import Claim, ClaimEvidence, EvidenceItem, Investigation, InvestigationStep
+from app.models import (
+    Claim,
+    ClaimEvidence,
+    EvidenceItem,
+    Investigation,
+    InvestigationStep,
+    Workspace,
+)
 from app.schemas.investigation import (
     ExecutiveBrief,
     ExecutiveBriefConfidenceLevel,
@@ -24,6 +32,7 @@ from app.schemas.investigation import (
     InvestigationHistoryItem,
     InvestigationHistoryResponse,
 )
+from app.workspaces import get_active_workspace
 
 router = APIRouter()
 celery_client = Celery("orion-api", broker=settings.celery_broker_url)
@@ -86,11 +95,17 @@ def _decode_cursor(value: str) -> tuple[datetime, uuid.UUID]:
 )
 async def create_investigation(
     request: InvestigationCreateRequest,
+    workspace: Workspace = Depends(get_active_workspace),
+    principal: Principal = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ) -> Investigation:
     if not settings.investigations_enabled:
         raise HTTPException(status_code=503, detail="Investigations are disabled.")
-    investigation = Investigation(question=request.question.strip())
+    investigation = Investigation(
+        question=request.question.strip(),
+        workspace_id=workspace.id,
+        created_by_subject=principal.subject,
+    )
     db.add(investigation)
     await db.commit()
     await db.refresh(investigation)
@@ -123,9 +138,13 @@ async def create_investigation(
 async def list_investigations(
     limit: int = Query(default=20, ge=1, le=100),
     cursor: str | None = None,
+    workspace: Workspace = Depends(get_active_workspace),
+    principal: Principal = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ) -> InvestigationHistoryResponse:
-    statement = select(Investigation)
+    statement = select(Investigation).where(Investigation.workspace_id == workspace.id)
+    if workspace.is_demo:
+        statement = statement.where(Investigation.created_by_subject == principal.subject)
     if cursor:
         created_at, investigation_id = _decode_cursor(cursor)
         statement = statement.where(
@@ -175,16 +194,27 @@ async def list_investigations(
 @router.get("/{investigation_id}", response_model=InvestigationDetailResponse)
 async def get_investigation(
     investigation_id: uuid.UUID,
+    workspace: Workspace = Depends(get_active_workspace),
+    principal: Principal = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ) -> InvestigationDetailResponse:
-    investigation = await db.get(Investigation, investigation_id)
+    filters = [
+        Investigation.id == investigation_id,
+        Investigation.workspace_id == workspace.id,
+    ]
+    if workspace.is_demo:
+        filters.append(Investigation.created_by_subject == principal.subject)
+    investigation = (await db.execute(select(Investigation).where(*filters))).scalar_one_or_none()
     if investigation is None:
         raise HTTPException(status_code=404, detail="Investigation not found.")
     steps = list(
         (
             await db.execute(
                 select(InvestigationStep)
-                .where(InvestigationStep.investigation_id == investigation_id)
+                .where(
+                    InvestigationStep.investigation_id == investigation_id,
+                    InvestigationStep.workspace_id == workspace.id,
+                )
                 .order_by(InvestigationStep.sequence)
             )
         )
@@ -195,7 +225,10 @@ async def get_investigation(
         (
             await db.execute(
                 select(EvidenceItem)
-                .where(EvidenceItem.investigation_id == investigation_id)
+                .where(
+                    EvidenceItem.investigation_id == investigation_id,
+                    EvidenceItem.workspace_id == workspace.id,
+                )
                 .order_by(EvidenceItem.created_at, EvidenceItem.id)
             )
         )
@@ -206,7 +239,10 @@ async def get_investigation(
         (
             await db.execute(
                 select(Claim)
-                .where(Claim.investigation_id == investigation_id)
+                .where(
+                    Claim.investigation_id == investigation_id,
+                    Claim.workspace_id == workspace.id,
+                )
                 .order_by(Claim.created_at, Claim.id)
             )
         )
@@ -229,7 +265,7 @@ async def get_investigation(
     evidence_by_claim: dict[uuid.UUID, list[uuid.UUID]] = {}
     for link in links:
         evidence_by_claim.setdefault(link.claim_id, []).append(link.evidence_id)
-    graph = await build_evidence_graph(db, investigation_id)
+    graph = await build_evidence_graph(db, investigation_id, workspace.id)
     step_responses = []
     for step in steps:
         description, required, depends_on = _step_metadata(

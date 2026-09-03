@@ -42,9 +42,16 @@ def decimal_string(value: Decimal) -> str:
 
 
 class ToolExecutor:
-    def __init__(self, db: AsyncSession, investigation_id: uuid.UUID, budget: ExecutionBudget):
+    def __init__(
+        self,
+        db: AsyncSession,
+        investigation_id: uuid.UUID,
+        workspace_id: uuid.UUID,
+        budget: ExecutionBudget,
+    ):
         self.db = db
         self.investigation_id = investigation_id
+        self.workspace_id = workspace_id
         self.budget = budget
         self.prior_outputs: dict[int, dict[str, Any]] = {}
 
@@ -63,10 +70,15 @@ class ToolExecutor:
         if handler is None:
             raise ToolExecutionError(f"Tool is not enabled for INVESTIGATE: {tool_call.tool}")
         result = await handler(step, tool_call.arguments)
+        result["workspace_id"] = str(self.workspace_id)
         self.prior_outputs[step.sequence] = result
         return result
 
     def load_completed_output(self, sequence: int, output: dict[str, Any]) -> None:
+        if output.get("workspace_id") != str(self.workspace_id):
+            raise RequiredDataError(
+                f"Completed output from step {sequence} is missing trusted workspace scope"
+            )
         self.prior_outputs[sequence] = output
 
     async def _evidence(
@@ -87,9 +99,12 @@ class ToolExecutor:
         evidence_id = uuid.uuid5(EVIDENCE_NAMESPACE, key)
         existing = await self.db.get(EvidenceItem, evidence_id)
         if existing is not None:
+            if existing.workspace_id != self.workspace_id:
+                raise ToolExecutionError("Evidence ID collision crossed a workspace boundary")
             return existing
         item = EvidenceItem(
             id=evidence_id,
+            workspace_id=self.workspace_id,
             investigation_id=self.investigation_id,
             step_id=step.id,
             evidence_kind=kind,
@@ -111,11 +126,13 @@ class ToolExecutor:
     ) -> dict[str, Any]:
         self.budget.consume_retrieval()
         filters = [
+            MetricObservation.workspace_id == self.workspace_id,
             MetricObservation.metric_key == arguments.metric_key,
             MetricObservation.period_start >= arguments.period_start,
             MetricObservation.period_end <= arguments.period_end,
         ]
         if arguments.entity_ids:
+            await self._validate_entity_ids(arguments.entity_ids)
             filters.append(MetricObservation.entity_id.in_(arguments.entity_ids))
         statement = (
             select(MetricObservation, Entity.name)
@@ -157,7 +174,11 @@ class ToolExecutor:
 
     def _metric_output(self, sequence: int) -> list[dict[str, Any]]:
         output = self.prior_outputs.get(sequence)
-        if not output or not output.get("observations"):
+        if (
+            not output
+            or output.get("workspace_id") != str(self.workspace_id)
+            or not output.get("observations")
+        ):
             raise RequiredDataError(f"Metric evidence from step {sequence} is unavailable")
         return output["observations"]
 
@@ -276,8 +297,27 @@ class ToolExecutor:
         )
         return {**payload, "evidence_ids": [str(evidence.id)]}
 
-    def _resolve_entities(self, entity_ids: list[uuid.UUID], selector: Any) -> list[uuid.UUID]:
+    async def _validate_entity_ids(self, entity_ids: list[uuid.UUID]) -> None:
+        if not entity_ids:
+            return
+        found = set(
+            (
+                await self.db.execute(
+                    select(Entity.id).where(
+                        Entity.workspace_id == self.workspace_id,
+                        Entity.id.in_(entity_ids),
+                    )
+                )
+            ).scalars()
+        )
+        if found != set(entity_ids):
+            raise RequiredDataError("One or more entities are not available in this workspace")
+
+    async def _resolve_entities(
+        self, entity_ids: list[uuid.UUID], selector: Any
+    ) -> list[uuid.UUID]:
         if entity_ids:
+            await self._validate_entity_ids(entity_ids)
             return entity_ids
         if selector and str(selector) in {
             "top_contributor",
@@ -294,12 +334,13 @@ class ToolExecutor:
         self, step: InvestigationStep, arguments: QueryRelatedRecordsInput
     ) -> dict[str, Any]:
         self.budget.consume_retrieval()
-        entity_ids = self._resolve_entities(arguments.entity_ids, arguments.entity_selector)
+        entity_ids = await self._resolve_entities(arguments.entity_ids, arguments.entity_selector)
         filters = [
+            BusinessRecord.workspace_id == self.workspace_id,
             or_(
                 BusinessRecord.primary_entity_id.in_(entity_ids),
                 BusinessRecord.related_entity_id.in_(entity_ids),
-            )
+            ),
         ]
         if arguments.record_types:
             filters.append(
@@ -357,7 +398,7 @@ class ToolExecutor:
     ) -> dict[str, Any]:
         self.budget.consume_retrieval()
         entity_ids = (
-            self._resolve_entities(arguments.entity_ids, arguments.entity_selector)
+            await self._resolve_entities(arguments.entity_ids, arguments.entity_selector)
             if arguments.entity_ids or arguments.entity_selector
             else []
         )
@@ -368,6 +409,7 @@ class ToolExecutor:
                     await self.db.execute(
                         select(BusinessRecord.source_document_id)
                         .where(
+                            BusinessRecord.workspace_id == self.workspace_id,
                             or_(
                                 BusinessRecord.primary_entity_id.in_(entity_ids),
                                 BusinessRecord.related_entity_id.in_(entity_ids),
@@ -381,7 +423,11 @@ class ToolExecutor:
             if not document_ids:
                 return {"chunks": [], "evidence_ids": []}
         chunks = await semantic_search(
-            self.db, arguments.query, limit=arguments.limit, document_ids=document_ids or None
+            self.db,
+            self.workspace_id,
+            arguments.query,
+            limit=arguments.limit,
+            document_ids=document_ids or None,
         )
         output = []
         for chunk in chunks:
@@ -414,7 +460,7 @@ class ToolExecutor:
         self, step: InvestigationStep, arguments: TraverseRelationshipsInput
     ) -> dict[str, Any]:
         self.budget.consume_retrieval()
-        initial = self._resolve_entities(arguments.entity_ids, arguments.entity_selector)
+        initial = await self._resolve_entities(arguments.entity_ids, arguments.entity_selector)
         visited = set(initial)
         frontier = set(initial)
         found: dict[uuid.UUID, EntityRelationship] = {}
@@ -422,10 +468,11 @@ class ToolExecutor:
             if not frontier or len(visited) >= arguments.max_nodes:
                 break
             filters = [
+                EntityRelationship.workspace_id == self.workspace_id,
                 or_(
                     EntityRelationship.source_entity_id.in_(frontier),
                     EntityRelationship.target_entity_id.in_(frontier),
-                )
+                ),
             ]
             if arguments.relationship_types:
                 filters.append(

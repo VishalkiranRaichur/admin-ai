@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     investigations_enabled: bool = True
     investigation_planner_mode: str = "model"
 
+    orion_auth_mode: str = "local"
     clerk_jwks_url: str = ""
     clerk_issuer: str = ""
     cors_origins: list[str] = ["http://localhost:3000"]

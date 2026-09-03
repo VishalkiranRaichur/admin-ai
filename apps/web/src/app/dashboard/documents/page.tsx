@@ -4,6 +4,7 @@ import { FileText, LoaderCircle, Upload, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { apiFetch } from "@/lib/api";
+import { useWorkspace } from "@/components/workspace-provider";
 
 type Document = {
   id: string;
@@ -21,6 +22,7 @@ function formatBytes(bytes: number) {
 }
 
 export default function DocumentsPage() {
+  const { workspace, cacheKey } = useWorkspace();
   const inputRef = useRef<HTMLInputElement>(null);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
@@ -40,8 +42,10 @@ export default function DocumentsPage() {
   }, []);
 
   useEffect(() => {
+    setDocuments([]);
+    setLoading(true);
     void loadDocuments();
-  }, [loadDocuments]);
+  }, [cacheKey, loadDocuments]);
 
   async function uploadDocument(file?: File) {
     if (!file || uploading) return;
@@ -98,7 +102,7 @@ export default function DocumentsPage() {
             setDragging(false);
             void uploadDocument(event.dataTransfer.files[0]);
           }}
-          disabled={uploading}
+          disabled={uploading || workspace?.is_demo}
           className={`group flex w-full flex-col items-center justify-center rounded-2xl border border-dashed px-6 py-12 transition sm:py-14 ${
             dragging
               ? "border-[#7c7cf8]/70 bg-[#7c7cf8]/10"
@@ -113,7 +117,11 @@ export default function DocumentsPage() {
             )}
           </div>
           <p className="text-sm font-medium">
-            {uploading ? "Processing and indexing document…" : "Drop a file here or choose a file"}
+            {workspace?.is_demo
+              ? "Demo documents are read-only"
+              : uploading
+                ? "Processing and indexing document…"
+                : "Drop a file here or choose a file"}
           </p>
           <p className="mt-2 text-xs text-[#8c8ca8]">
             PDF, DOCX, TXT, Markdown, or CSV · up to 20 MB

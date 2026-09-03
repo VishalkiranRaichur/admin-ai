@@ -1,4 +1,11 @@
 const configuredApiUrl = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "");
+export const workspaceStorageKey = "orion.activeWorkspaceId";
+
+let tokenProvider: (() => Promise<string | null>) | null = null;
+
+export function setApiTokenProvider(provider: (() => Promise<string | null>) | null) {
+  tokenProvider = provider;
+}
 
 export const apiUrl = (path: string) => `${configuredApiUrl ?? ""}${path}`;
 
@@ -49,7 +56,18 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   let response: Response;
 
   try {
-    response = await fetch(apiUrl(path), init);
+    const headers = new Headers(init?.headers);
+    if (typeof window !== "undefined") {
+      const workspaceId = window.localStorage.getItem(workspaceStorageKey);
+      if (workspaceId && !headers.has("X-Workspace-ID")) {
+        headers.set("X-Workspace-ID", workspaceId);
+      }
+    }
+    const token = tokenProvider ? await tokenProvider() : null;
+    if (token && !headers.has("Authorization")) {
+      headers.set("Authorization", `Bearer ${token}`);
+    }
+    response = await fetch(apiUrl(path), { ...init, headers });
   } catch {
     throw new Error(
       "Cannot reach the ORION API. Make sure the backend and local services are running."

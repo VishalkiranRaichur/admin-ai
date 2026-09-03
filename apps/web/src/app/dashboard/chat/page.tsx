@@ -7,18 +7,28 @@ import {
   Zap,
 } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 
 import { apiFetch, type AskRequest, type AskResponse, type AskSource } from "@/lib/api";
+import { useWorkspace } from "@/components/workspace-provider";
 
 export default function ChatPage() {
+  const { cacheKey } = useWorkspace();
   const [input, setInput] = useState("");
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
   const [sources, setSources] = useState<AskSource[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    setInput("");
+    setQuestion("");
+    setAnswer("");
+    setSources([]);
+    setError("");
+  }, [cacheKey]);
 
   async function handleSubmit() {
     const submittedQuestion = input.trim();

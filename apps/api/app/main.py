@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routers import ask, documents, health, investigations
+from app.routers import ask, documents, health, investigations, workspaces
 
 app = FastAPI(
     title=settings.app_name,
@@ -16,6 +16,12 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+
+app.include_router(
+    workspaces.router,
+    prefix=f"{settings.api_prefix}/workspaces",
+    tags=["workspaces"],
 )
 
 app.include_router(

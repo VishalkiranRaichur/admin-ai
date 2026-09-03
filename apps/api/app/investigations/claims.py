@@ -39,6 +39,7 @@ async def _upsert_claim(
     db: AsyncSession,
     *,
     investigation_id: uuid.UUID,
+    workspace_id: uuid.UUID,
     key: str,
     classification: ClaimClassification,
     statement: str,
@@ -52,8 +53,14 @@ async def _upsert_claim(
     claim_id = _claim_id(investigation_id, key)
     claim = await db.get(Claim, claim_id)
     if claim is None:
-        claim = Claim(id=claim_id, investigation_id=investigation_id)
+        claim = Claim(
+            id=claim_id,
+            investigation_id=investigation_id,
+            workspace_id=workspace_id,
+        )
         db.add(claim)
+    elif claim.workspace_id != workspace_id:
+        raise ValueError("Claim ID collision crossed a workspace boundary")
     claim.classification = classification.value
     claim.statement = statement
     claim.validation_status = validation_status.value
@@ -80,19 +87,30 @@ async def _upsert_claim(
     return claim
 
 
-async def build_and_validate_claims(db: AsyncSession, investigation_id: uuid.UUID) -> list[Claim]:
+async def build_and_validate_claims(
+    db: AsyncSession, investigation_id: uuid.UUID, workspace_id: uuid.UUID
+) -> list[Claim]:
     evidence = list(
         (
             await db.execute(
                 select(EvidenceItem)
-                .where(EvidenceItem.investigation_id == investigation_id)
+                .where(
+                    EvidenceItem.investigation_id == investigation_id,
+                    EvidenceItem.workspace_id == workspace_id,
+                )
                 .order_by(EvidenceItem.created_at, EvidenceItem.id)
             )
         )
         .scalars()
         .all()
     )
-    entity_names = dict((await db.execute(select(Entity.id, Entity.name))).all())
+    entity_names = dict(
+        (
+            await db.execute(
+                select(Entity.id, Entity.name).where(Entity.workspace_id == workspace_id)
+            )
+        ).all()
+    )
     claims: list[Claim] = []
     for item in evidence:
         if item.evidence_kind == "metric_observation":
@@ -101,6 +119,7 @@ async def build_and_validate_claims(db: AsyncSession, investigation_id: uuid.UUI
                 await _upsert_claim(
                     db,
                     investigation_id=investigation_id,
+                    workspace_id=workspace_id,
                     key=f"fact:{item.id}",
                     classification=ClaimClassification.FACT,
                     statement=(
@@ -120,6 +139,7 @@ async def build_and_validate_claims(db: AsyncSession, investigation_id: uuid.UUI
                 await _upsert_claim(
                     db,
                     investigation_id=investigation_id,
+                    workspace_id=workspace_id,
                     key=f"fact:{item.id}",
                     classification=ClaimClassification.FACT,
                     statement=f"Source evidence records: {title}.",
@@ -164,6 +184,7 @@ async def build_and_validate_claims(db: AsyncSession, investigation_id: uuid.UUI
             await _upsert_claim(
                 db,
                 investigation_id=investigation_id,
+                workspace_id=workspace_id,
                 key=key,
                 classification=ClaimClassification.DERIVED,
                 statement=statement,
@@ -177,11 +198,7 @@ async def build_and_validate_claims(db: AsyncSession, investigation_id: uuid.UUI
         )
 
     metric_change = next(
-        (
-            item
-            for item in calculations
-            if item.payload.get("operation") == "metric_change"
-        ),
+        (item for item in calculations if item.payload.get("operation") == "metric_change"),
         None,
     )
     causal_cutoff: date | None = None
@@ -237,6 +254,7 @@ async def build_and_validate_claims(db: AsyncSession, investigation_id: uuid.UUI
             await _upsert_claim(
                 db,
                 investigation_id=investigation_id,
+                workspace_id=workspace_id,
                 key="hypothesis:primary_driver",
                 classification=ClaimClassification.HYPOTHESIS,
                 statement=statement,
@@ -263,14 +281,22 @@ async def build_and_validate_claims(db: AsyncSession, investigation_id: uuid.UUI
 
 
 async def build_executive_brief(
-    db: AsyncSession, investigation_id: uuid.UUID, optional_failures: list[str]
+    db: AsyncSession,
+    investigation_id: uuid.UUID,
+    workspace_id: uuid.UUID,
+    optional_failures: list[str],
 ) -> ExecutiveBrief:
     claims = list(
-        (await db.execute(
-            select(Claim)
-            .where(Claim.investigation_id == investigation_id)
-            .order_by(Claim.created_at, Claim.id)
-        ))
+        (
+            await db.execute(
+                select(Claim)
+                .where(
+                    Claim.investigation_id == investigation_id,
+                    Claim.workspace_id == workspace_id,
+                )
+                .order_by(Claim.created_at, Claim.id)
+            )
+        )
         .scalars()
         .all()
     )
@@ -318,7 +344,10 @@ async def build_executive_brief(
             (
                 await db.execute(
                     select(EvidenceItem)
-                    .where(EvidenceItem.id.in_([link.evidence_id for link in links]))
+                    .where(
+                        EvidenceItem.workspace_id == workspace_id,
+                        EvidenceItem.id.in_([link.evidence_id for link in links]),
+                    )
                     .order_by(EvidenceItem.created_at, EvidenceItem.id)
                 )
             ).scalars()
@@ -353,9 +382,7 @@ async def build_executive_brief(
     insufficient = [claim for claim in claims if claim.validation_status == "insufficient_evidence"]
     for claim in insufficient:
         uncertainties.append(
-            ExecutiveBriefUncertainty(
-                text="Causal explanation has insufficient evidence."
-            )
+            ExecutiveBriefUncertainty(text="Causal explanation has insufficient evidence.")
         )
     brief = ExecutiveBrief(
         what_happened=SupportedBriefStatement(text=change.statement, claim_ids=[change.id]),
@@ -404,16 +431,28 @@ async def build_executive_brief(
     return brief
 
 
-async def build_evidence_graph(db: AsyncSession, investigation_id: uuid.UUID) -> EvidenceGraph:
+async def build_evidence_graph(
+    db: AsyncSession, investigation_id: uuid.UUID, workspace_id: uuid.UUID
+) -> EvidenceGraph:
     claims = list(
-        (await db.execute(select(Claim).where(Claim.investigation_id == investigation_id)))
+        (
+            await db.execute(
+                select(Claim).where(
+                    Claim.investigation_id == investigation_id,
+                    Claim.workspace_id == workspace_id,
+                )
+            )
+        )
         .scalars()
         .all()
     )
     evidence = list(
         (
             await db.execute(
-                select(EvidenceItem).where(EvidenceItem.investigation_id == investigation_id)
+                select(EvidenceItem).where(
+                    EvidenceItem.investigation_id == investigation_id,
+                    EvidenceItem.workspace_id == workspace_id,
+                )
             )
         ).scalars()
     )

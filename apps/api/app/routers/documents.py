@@ -10,12 +10,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import get_db
-from app.models import Document
+from app.models import Document, Workspace
 from app.schemas import DocumentResponse
 from app.services.document_ingestion import ingest_document
 from app.services.document_processor import process_document
 from app.services.embedding_service import OpenAIConfigurationError
 from app.services.storage import delete_file, upload_file
+from app.workspaces import get_active_workspace, get_mutable_workspace
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -25,10 +26,15 @@ ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt", ".csv", ".md"}
 
 @router.get("", response_model=list[DocumentResponse])
 async def list_documents(
+    workspace: Workspace = Depends(get_active_workspace),
     db: AsyncSession = Depends(get_db),
 ) -> list[Document]:
     try:
-        result = await db.execute(select(Document).order_by(Document.created_at.desc()))
+        result = await db.execute(
+            select(Document)
+            .where(Document.workspace_id == workspace.id)
+            .order_by(Document.created_at.desc())
+        )
         return list(result.scalars().all())
     except SQLAlchemyError as error:
         logger.exception("Failed to list documents")
@@ -45,6 +51,7 @@ async def list_documents(
 )
 async def upload_document(
     file: UploadFile = File(...),
+    workspace: Workspace = Depends(get_mutable_workspace),
     db: AsyncSession = Depends(get_db),
 ) -> Document:
     filename = Path(file.filename or "unnamed").name
@@ -75,13 +82,14 @@ async def upload_document(
 
     document_id = uuid.uuid4()
 
-    storage_key = f"documents/{document_id}/{filename}"
+    storage_key = f"workspaces/{workspace.id}/documents/{document_id}/{filename}"
 
     content_type = file.content_type or "application/octet-stream"
 
     try:
         document = await ingest_document(
             db=db,
+            workspace_id=workspace.id,
             file_bytes=file_bytes,
             filename=filename,
             content_type=content_type,

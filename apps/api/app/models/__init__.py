@@ -11,6 +11,7 @@ from app.models.investigation import (
     InvestigationStep,
     MetricObservation,
 )
+from app.models.workspace import DEMO_WORKSPACE_ID, LEGACY_WORKSPACE_ID, Workspace
 
 __all__ = [
     "Claim",
@@ -24,4 +25,7 @@ __all__ = [
     "Investigation",
     "InvestigationStep",
     "MetricObservation",
+    "Workspace",
+    "DEMO_WORKSPACE_ID",
+    "LEGACY_WORKSPACE_ID",
 ]

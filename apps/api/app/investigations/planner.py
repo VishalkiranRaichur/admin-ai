@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import UTC, date, datetime
 from typing import Protocol
 
@@ -13,6 +14,7 @@ from app.schemas.investigation import (
     InvestigationPlanStep,
     InvestigationToolCall,
     InvestigationToolKind,
+    PlannerInvestigationPlan,
     QueryMetricSeriesInput,
     QueryRelatedRecordsInput,
     RankEntityContributionsInput,
@@ -21,27 +23,98 @@ from app.schemas.investigation import (
 )
 from app.services.structured_response import parse_structured_response
 
+MetricPeriod = tuple[date, date]
+
+MONTHS = {
+    "january": 1,
+    "february": 2,
+    "march": 3,
+    "april": 4,
+    "may": 5,
+    "june": 6,
+    "july": 7,
+    "august": 8,
+    "september": 9,
+    "october": 10,
+    "november": 11,
+    "december": 12,
+}
+
+
+def build_planner_input(question: str, metric_periods: tuple[MetricPeriod, ...]) -> str:
+    lines = [f"USER QUESTION:\n{question}"]
+    if not metric_periods:
+        lines.append("WORKSPACE METRIC AVAILABILITY:\nNo recognized revenue periods are available.")
+        return "\n\n".join(lines)
+
+    ordered = sorted(set(metric_periods))
+    availability = "\n".join(
+        f"- recognized_revenue_usd: {period_start.isoformat()} through {period_end.isoformat()}"
+        for period_start, period_end in ordered
+    )
+    lines.append(f"WORKSPACE METRIC AVAILABILITY:\n{availability}")
+
+    lowered = question.lower()
+    has_explicit_year = re.search(r"\b(?:19|20)\d{2}\b", question) is not None
+    mentioned_months = [
+        number for name, number in MONTHS.items() if re.search(rf"\b{name}\b", lowered)
+    ]
+    if mentioned_months and not has_explicit_year:
+        candidates = [period for period in ordered if period[0].month in mentioned_months]
+        if candidates:
+            current = candidates[-1]
+            previous = next(
+                (period for period in reversed(ordered) if period[0] < current[0]), None
+            )
+            resolution = (
+                "Resolve the ambiguous month to the latest matching workspace period: "
+                f"current={current[0].isoformat()} through {current[1].isoformat()}."
+            )
+            if previous:
+                resolution += (
+                    " Use the immediately preceding available period for comparison: "
+                    f"comparison={previous[0].isoformat()} through {previous[1].isoformat()}."
+                )
+            lines.append(f"DATE RESOLUTION:\n{resolution}")
+    return "\n\n".join(lines)
+
 
 class PlannerGateway(Protocol):
-    async def create_plan(self, question: str) -> InvestigationPlan: ...
+    async def create_plan(
+        self, question: str, *, metric_periods: tuple[MetricPeriod, ...] = ()
+    ) -> InvestigationPlan: ...
 
 
 class ModelPlannerGateway:
-    async def create_plan(self, question: str) -> InvestigationPlan:
-        return await parse_structured_response(
-            response_type=InvestigationPlan,
+    async def create_plan(
+        self, question: str, *, metric_periods: tuple[MetricPeriod, ...] = ()
+    ) -> InvestigationPlan:
+        plan = await parse_structured_response(
+            response_type=PlannerInvestigationPlan,
             instructions=(
-                "Create one bounded business investigation plan. Use only the supplied schema and "
-                "allowlisted tools. Never emit SQL. Use at most eight sequential steps."
+                "Create one bounded recognized-revenue investigation plan using only the supplied "
+                "schema and allowlisted tools. Never emit SQL. Use at most eight sequential steps. "
+                "Use exactly one query_metric_series step spanning the comparison-period start "
+                "through the current-period end. Both calculate_metric_change.current_step and "
+                "rank_entity_contributions.metric_step must reference that same metric-query step, "
+                "and both steps must directly depend on it. Set "
+                "calculate_metric_change.comparison_step to null. Calls to "
+                "query_related_records or traverse_relationships must occur after the ranking "
+                "step, depend on that step, and use entity_selector=top_contributor. Do not invent "
+                "entity UUIDs or dates outside WORKSPACE METRIC AVAILABILITY. Treat supporting "
+                "record, document, and relationship searches as optional."
             ),
-            input_text=question,
+            input_text=build_planner_input(question, metric_periods),
         )
+        return plan.to_investigation_plan()
 
 
 class DeterministicPlannerGateway:
     """Deterministic adapter used by CI and the ORION demo evaluation."""
 
-    async def create_plan(self, question: str) -> InvestigationPlan:
+    async def create_plan(
+        self, question: str, *, metric_periods: tuple[MetricPeriod, ...] = ()
+    ) -> InvestigationPlan:
         lowered = question.lower()
         if "revenue" not in lowered or "july" not in lowered:
             raise PlanValidationError(
@@ -148,6 +221,7 @@ def canonicalize_plan(plan: InvestigationPlan) -> InvestigationPlan:
             "Phase 2 supports recognized-revenue metric investigations only"
         )
     plan.intent.metric = resolve_metric(plan.intent.metric)
+    steps_by_sequence = {step.sequence: step for step in plan.steps}
     tools_by_sequence = {step.sequence: step.tool_call.tool for step in plan.steps}
     for step in plan.steps:
         if step.tool_call.tool not in ENABLED_TOOLS:
@@ -185,6 +259,21 @@ def canonicalize_plan(plan: InvestigationPlan) -> InvestigationPlan:
             if referenced_sequence not in step.depends_on:
                 raise PlanValidationError(
                     f"Step {step.sequence} must depend on referenced step {referenced_sequence}"
+                )
+
+        if step.tool_call.tool == InvestigationToolKind.RANK_ENTITY_CONTRIBUTIONS:
+            arguments = step.tool_call.arguments
+            assert isinstance(arguments, RankEntityContributionsInput)
+            metric_step = steps_by_sequence[arguments.metric_step]
+            metric_arguments = metric_step.tool_call.arguments
+            assert isinstance(metric_arguments, QueryMetricSeriesInput)
+            if not (
+                metric_arguments.period_start <= arguments.comparison_period_start
+                and metric_arguments.period_end >= arguments.current_period_start
+            ):
+                raise PlanValidationError(
+                    "rank_entity_contributions metric_step must cover both comparison and "
+                    "current periods"
                 )
 
         selector = getattr(step.tool_call.arguments, "entity_selector", None)
