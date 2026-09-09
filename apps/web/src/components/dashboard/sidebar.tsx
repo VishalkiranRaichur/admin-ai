@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Database,
   FileText,
   SearchCheck,
   MessageSquare,
@@ -25,6 +26,11 @@ const navItems = [
     href: "/dashboard/documents",
     label: "Documents",
     icon: FileText,
+  },
+  {
+    href: "/dashboard/data-sources",
+    label: "Data Sources",
+    icon: Database,
   },
   {
     href: "/dashboard/investigate",
@@ -54,7 +60,7 @@ export function Sidebar() {
         <div className="flex items-center gap-2">
           <WorkspaceSwitcher />
         <nav className="flex items-center gap-1" aria-label="Mobile dashboard navigation">
-          {navItems.slice(0, 3).map(({ href, label, icon: Icon }) => {
+          {navItems.slice(0, 4).map(({ href, label, icon: Icon }) => {
             const active = pathname === href || pathname.startsWith(`${href}/`);
             return (
               <Link

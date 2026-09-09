@@ -1,3 +1,4 @@
+from app.models.data_source import DEMO_DATA_SOURCE_ID, DataSource
 from app.models.document import Document
 from app.models.document_chunk import DocumentChunk
 from app.models.investigation import (
@@ -17,6 +18,7 @@ __all__ = [
     "Claim",
     "ClaimEvidence",
     "BusinessRecord",
+    "DataSource",
     "Document",
     "DocumentChunk",
     "Entity",
@@ -27,5 +29,6 @@ __all__ = [
     "MetricObservation",
     "Workspace",
     "DEMO_WORKSPACE_ID",
+    "DEMO_DATA_SOURCE_ID",
     "LEGACY_WORKSPACE_ID",
 ]

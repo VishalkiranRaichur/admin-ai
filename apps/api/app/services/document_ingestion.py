@@ -25,12 +25,14 @@ async def ingest_document(
     delete: DeleteAdapter,
     processor: ProcessorAdapter,
     document_id: uuid.UUID | None = None,
+    data_source_id: uuid.UUID | None = None,
     commit: bool = True,
 ) -> Document:
     """Store, parse, chunk, embed, and persist a document without HTTP concerns."""
     document = Document(
         id=document_id or uuid.uuid4(),
         workspace_id=workspace_id,
+        data_source_id=data_source_id,
         filename=filename,
         content_type=content_type,
         size_bytes=len(file_bytes),

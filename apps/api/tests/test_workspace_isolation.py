@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.dialects import postgresql
 
 import app.investigations.tools as tools_module
+import app.services.search_service as search_service
 from app.investigations.budget import ExecutionBudget
 from app.investigations.errors import RequiredDataError
 from app.investigations.orchestrator import InvestigationOrchestrator
@@ -18,6 +19,7 @@ from app.models import (
     DEMO_WORKSPACE_ID,
     BusinessRecord,
     Claim,
+    DataSource,
     Document,
     DocumentChunk,
     Entity,
@@ -39,6 +41,7 @@ from app.schemas.investigation import (
 from app.workspaces import get_mutable_workspace
 
 SCOPED_MODELS = (
+    DataSource,
     Document,
     DocumentChunk,
     Investigation,
@@ -100,6 +103,12 @@ def test_every_persisted_capability_has_required_workspace_scope() -> None:
     record_unique = {tuple(item.columns.keys()) for item in BusinessRecord.__table__.constraints}
     assert ("workspace_id", "entity_type", "external_key") in entity_unique
     assert ("workspace_id", "record_type", "external_key") in record_unique
+    assert Document.__table__.c.data_source_id.nullable is True
+    source_foreign_keys = {
+        tuple(constraint.column_keys)
+        for constraint in Document.__table__.foreign_key_constraints
+    }
+    assert ("workspace_id", "data_source_id") in source_foreign_keys
 
 
 def test_workspace_header_is_required() -> None:
@@ -194,6 +203,23 @@ async def test_all_retrieval_tools_embed_workspace_predicates(monkeypatch) -> No
         _step(investigation_id, 4), SemanticDocumentSearchInput(query="renewal")
     )
     assert captured["workspace_id"] == workspace_id
+
+
+@pytest.mark.asyncio
+async def test_semantic_search_remains_workspace_wide_across_data_sources(monkeypatch) -> None:
+    workspace_id = uuid.uuid4()
+    session = CapturingSession()
+
+    async def fake_embedding(_query: str) -> list[float]:
+        return [0.0] * 1536
+
+    monkeypatch.setattr(search_service, "generate_embedding", fake_embedding)
+    assert await search_service.semantic_search(session, workspace_id, "revenue") == []
+    statement = _sql(session.statements[-1])
+    assert f"document_chunks.workspace_id = '{workspace_id}'" in statement
+    assert f"documents.workspace_id = '{workspace_id}'" in statement
+    where_clause = statement.split("WHERE", 1)[1].split("ORDER BY", 1)[0]
+    assert "data_source_id" not in where_clause
 
 
 @pytest.mark.asyncio

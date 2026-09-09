@@ -14,10 +14,13 @@ MIGRATION_HASHES = {
     "0003_investigation_engine.py": (
         "f574bcfc6bb2aab6e49849f21c18c6f39a9999c5bbca69296470bd39b9e5cee9"
     ),
+    "0004_workspace_isolation.py": (
+        "fcc3d3a22e02cb66df2c49920478f4bc1d5a8e84957f2c764bb71d6e6113ca08"
+    ),
 }
 
 
-def test_phase_three_migrations_are_byte_for_byte_unchanged() -> None:
+def test_existing_migrations_are_byte_for_byte_unchanged() -> None:
     versions = Path(__file__).resolve().parents[1] / "alembic" / "versions"
     actual = {
         name: hashlib.sha256((versions / name).read_bytes()).hexdigest()
@@ -26,12 +29,15 @@ def test_phase_three_migrations_are_byte_for_byte_unchanged() -> None:
     assert actual == MIGRATION_HASHES
 
 
-def test_workspace_migration_is_the_only_head() -> None:
+def test_data_source_migration_is_the_only_head() -> None:
     api_root = Path(__file__).resolve().parents[1]
     config = Config(str(api_root / "alembic.ini"))
     config.set_main_option("script_location", str(api_root / "alembic"))
     script = ScriptDirectory.from_config(config)
-    assert script.get_heads() == ["0004_workspace_isolation"]
+    assert script.get_heads() == ["0005_data_source_foundation"]
+    assert script.get_revision("0005_data_source_foundation").down_revision == (
+        "0004_workspace_isolation"
+    )
     assert script.get_revision("0004_workspace_isolation").down_revision == (
         "0003_investigation_engine"
     )

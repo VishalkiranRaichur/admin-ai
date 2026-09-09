@@ -32,6 +32,30 @@ export type AskResponse = {
   sources: AskSource[];
 };
 
+export type DataSource = {
+  id: string;
+  workspace_id: string;
+  name: string;
+  source_type: "upload" | "demo";
+  status: "ready" | "error";
+  external_key: string | null;
+  last_synced_at: string | null;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type Document = {
+  id: string;
+  data_source_id: string | null;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  storage_key: string;
+  status: string;
+  created_at: string;
+};
+
 export type ApiErrorDetail =
   | string
   | {

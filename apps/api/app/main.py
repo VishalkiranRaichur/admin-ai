@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routers import ask, documents, health, investigations, workspaces
+from app.routers import ask, data_sources, documents, health, investigations, workspaces
 
 app = FastAPI(
     title=settings.app_name,
@@ -34,6 +34,12 @@ app.include_router(
     documents.router,
     prefix=f"{settings.api_prefix}/documents",
     tags=["documents"],
+)
+
+app.include_router(
+    data_sources.router,
+    prefix=f"{settings.api_prefix}/data-sources",
+    tags=["data-sources"],
 )
 
 app.include_router(

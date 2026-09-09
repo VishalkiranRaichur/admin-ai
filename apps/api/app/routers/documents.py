@@ -1,16 +1,18 @@
 import logging
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from openai import OpenAIError
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.data_sources import find_workspace_data_source
 from app.db import get_db
-from app.models import Document, Workspace
+from app.models import DataSource, Document, Workspace
 from app.schemas import DocumentResponse
 from app.services.document_ingestion import ingest_document
 from app.services.document_processor import process_document
@@ -26,15 +28,18 @@ ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt", ".csv", ".md"}
 
 @router.get("", response_model=list[DocumentResponse])
 async def list_documents(
+    data_source_id: uuid.UUID | None = None,
     workspace: Workspace = Depends(get_active_workspace),
     db: AsyncSession = Depends(get_db),
 ) -> list[Document]:
     try:
-        result = await db.execute(
-            select(Document)
-            .where(Document.workspace_id == workspace.id)
-            .order_by(Document.created_at.desc())
-        )
+        statement = select(Document).where(Document.workspace_id == workspace.id)
+        if data_source_id is not None:
+            data_source = await find_workspace_data_source(db, workspace.id, data_source_id)
+            if data_source is None:
+                raise HTTPException(status_code=404, detail="Data source not found.")
+            statement = statement.where(Document.data_source_id == data_source.id)
+        result = await db.execute(statement.order_by(Document.created_at.desc()))
         return list(result.scalars().all())
     except SQLAlchemyError as error:
         logger.exception("Failed to list documents")
@@ -51,9 +56,16 @@ async def list_documents(
 )
 async def upload_document(
     file: UploadFile = File(...),
+    data_source_id: uuid.UUID | None = Form(default=None),
     workspace: Workspace = Depends(get_mutable_workspace),
     db: AsyncSession = Depends(get_db),
 ) -> Document:
+    data_source = None
+    if data_source_id is not None:
+        data_source = await find_workspace_data_source(db, workspace.id, data_source_id)
+        if data_source is None:
+            raise HTTPException(status_code=404, detail="Data source not found.")
+
     filename = Path(file.filename or "unnamed").name
 
     extension = Path(filename).suffix.lower()
@@ -87,6 +99,10 @@ async def upload_document(
     content_type = file.content_type or "application/octet-stream"
 
     try:
+        if data_source is not None:
+            data_source.status = "ready"
+            data_source.error = None
+            data_source.last_synced_at = datetime.now(UTC)
         document = await ingest_document(
             db=db,
             workspace_id=workspace.id,
@@ -98,9 +114,11 @@ async def upload_document(
             delete=delete_file,
             processor=process_document,
             document_id=document_id,
+            data_source_id=data_source_id,
         )
 
     except (OpenAIConfigurationError, OpenAIError, SQLAlchemyError, ValueError) as error:
+        await _record_source_failure(db, workspace.id, data_source_id)
         logger.exception("Document processing failed for %s", filename)
 
         status_code = 502 if isinstance(error, OpenAIError) else 422
@@ -114,6 +132,7 @@ async def upload_document(
             detail=f"Document processing failed: {error}",
         ) from error
     except Exception as error:
+        await _record_source_failure(db, workspace.id, data_source_id)
         logger.exception("Document upload failed for %s", filename)
         raise HTTPException(
             status_code=503,
@@ -121,3 +140,29 @@ async def upload_document(
         ) from error
 
     return document
+
+
+async def _record_source_failure(
+    db: AsyncSession,
+    workspace_id: uuid.UUID,
+    data_source_id: uuid.UUID | None,
+) -> None:
+    if data_source_id is None:
+        return
+    try:
+        await db.execute(
+            update(DataSource)
+            .where(
+                DataSource.id == data_source_id,
+                DataSource.workspace_id == workspace_id,
+            )
+            .values(
+                status="error",
+                error="The most recent document import failed.",
+                updated_at=datetime.now(UTC),
+            )
+        )
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        logger.exception("Could not persist data source import failure")

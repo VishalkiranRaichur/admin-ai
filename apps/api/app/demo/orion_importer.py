@@ -13,8 +13,10 @@ from sqlalchemy import delete as sa_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
+    DEMO_DATA_SOURCE_ID,
     DEMO_WORKSPACE_ID,
     BusinessRecord,
+    DataSource,
     Document,
     Entity,
     EntityRelationship,
@@ -137,6 +139,18 @@ async def import_orion_company(
         is_demo=True,
     )
     await db.flush()
+    demo_source = await _put(
+        db,
+        DataSource,
+        DEMO_DATA_SOURCE_ID,
+        workspace_id=DEMO_WORKSPACE_ID,
+        name="ORION Demo Import",
+        source_type="demo",
+        status="ready",
+        external_key="demo:orion_company",
+        error=None,
+    )
+    await db.flush()
     customers = _read_rows(root / "customers.csv", CustomerRow)
     revenue = _read_rows(root / "revenue.csv", RevenueRow)
     crm = _read_rows(root / "crm_activity.csv", ActivityRow)
@@ -225,10 +239,13 @@ async def import_orion_company(
                 delete=delete,
                 processor=processor,
                 document_id=identifier,
+                data_source_id=DEMO_DATA_SOURCE_ID,
                 commit=False,
             )
         elif existing.workspace_id != DEMO_WORKSPACE_ID:
             raise ValueError("A deterministic demo document ID is used outside the demo workspace")
+        else:
+            existing.data_source_id = DEMO_DATA_SOURCE_ID
         documents[relative] = existing
 
     for row_number, row in enumerate(revenue, start=2):
@@ -404,6 +421,9 @@ async def import_orion_company(
             1,
             source_document_id=meeting_document.id,
         )
+    demo_source.status = "ready"
+    demo_source.error = None
+    demo_source.last_synced_at = datetime.now(UTC)
     await db.commit()
     return {
         "customers": len(customers),
